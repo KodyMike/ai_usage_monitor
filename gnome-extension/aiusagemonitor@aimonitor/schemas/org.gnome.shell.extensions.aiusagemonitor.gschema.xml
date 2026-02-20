@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.aiusagemonitor" path="/org/gnome/shell/extensions/aiusagemonitor/">
+
+    <key name="refresh-interval" type="i">
+      <default>60</default>
+      <summary>Refresh interval</summary>
+      <description>How often to refresh usage data (in seconds)</description>
+    </key>
+
+    <key name="panel-tool" type="s">
+      <default>'claude'</default>
+      <summary>Tool to show in panel</summary>
+      <description>Which AI tool to display in the panel (claude, codex, or gemini)</description>
+    </key>
+
+    <key name="panel-display-mode" type="i">
+      <default>0</default>
+      <summary>Panel display mode</summary>
+      <description>Display style: 0=ring+percentage, 1=ring only, 2=percentage only</description>
+    </key>
+
+    <key name="show-claude" type="b">
+      <default>true</default>
+      <summary>Show Claude Code</summary>
+      <description>Show Claude Code in the popup menu</description>
+    </key>
+
+    <key name="show-codex" type="b">
+      <default>true</default>
+      <summary>Show OpenAI Codex</summary>
+      <description>Show OpenAI Codex in the popup menu</description>
+    </key>
+
+    <key name="show-gemini" type="b">
+      <default>true</default>
+      <summary>Show Gemini CLI</summary>
+      <description>Show Gemini CLI in the popup menu</description>
+    </key>
+
+  </schema>
+</schemalist>

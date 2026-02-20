@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [{"Name": "AI Usage Monitor", "Email": ""}],
+        "Category": "System Information",
+        "Description": "Monitor Claude Code, Gemini CLI, and OpenAI Codex usage from your panel",
+        "Icon": "com.aiusagemonitor",
+        "Id": "com.aiusagemonitor",
+        "Name": "AI Usage Monitor",
+        "Version": "1.1.0",
+        "License": "GPL-3.0-or-later",
+        "Website": "https://github.com/KodyMike/ai_usage_monitor/tree/main/com.aiusagemonitor"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
