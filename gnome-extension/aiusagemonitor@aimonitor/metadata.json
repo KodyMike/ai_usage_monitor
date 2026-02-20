@@ -1,0 +1,15 @@
+{
+  "name": "AI Usage Monitor",
+  "description": "Monitor Claude Code, Gemini CLI, and OpenAI Codex usage from your panel",
+  "uuid": "aiusagemonitor@aimonitor",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49"
+  ],
+  "url": "https://github.com/KodyMike/ai_usage_monitor/tree/main/gnome-extension/aiusagemonitor@aimonitor",
+  "version": 2,
+  "settings-schema": "org.gnome.shell.extensions.aiusagemonitor"
+}
