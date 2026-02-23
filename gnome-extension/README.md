@@ -4,10 +4,6 @@ Monitor Claude Code, OpenAI Codex, and Gemini CLI usage directly from your GNOME
 
 ## Install
 
-### From GNOME Extensions (recommended)
-
-Install via [extensions.gnome.org](https://extensions.gnome.org) — no logout required.
-
 ### Manual install
 
 ```bash
