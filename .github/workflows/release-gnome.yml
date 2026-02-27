@@ -1,0 +1,27 @@
+name: Build and Attach GNOME Extension
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build GNOME extension zip
+        run: |
+          cd gnome-extension/aiusagemonitor@aimonitor
+          zip -r ../../ai-usage-monitor-gnome.zip . \
+            -x "install.sh" "*/__pycache__/*" "*.pyc" ".git/*" ".DS_Store"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ai-usage-monitor-gnome.zip

@@ -217,9 +217,14 @@ if codex_sessions_dir.exists():
         last_tc_payload = None
         last_model = ''
 
-        # Walk from newest to oldest, stop at first session with rate limit data
+        # Walk from newest to oldest, stop at first session with rate limit data.
+        # Codex now emits multiple token_count events per turn with different
+        # limit_ids (e.g. "codex" for the main plan limit, "codex_bengalfox" for
+        # a model-specific limit).  Prefer the main "codex" limit_id since it
+        # reflects overall plan usage; fall back to any other if not found.
         for sf in reversed(files):
-            last_in_file = None
+            main_in_file = None   # limit_id == "codex"
+            fallback_in_file = None  # any other token_count
             try:
                 with open(sf, errors='replace') as f:
                     for line in f:
@@ -231,7 +236,11 @@ if codex_sessions_dir.exists():
                             if obj.get('type') == 'event_msg':
                                 payload = obj.get('payload', {})
                                 if payload.get('type') == 'token_count':
-                                    last_in_file = payload
+                                    lid = payload.get('rate_limits', {}).get('limit_id', '')
+                                    if lid == 'codex':
+                                        main_in_file = payload
+                                    else:
+                                        fallback_in_file = payload
                             elif obj.get('type') == 'turn_context':
                                 m = obj.get('payload', {}).get('model', '')
                                 if m:
@@ -241,8 +250,9 @@ if codex_sessions_dir.exists():
             except OSError:
                 continue
 
-            if last_in_file:
-                last_tc_payload = last_in_file
+            chosen = main_in_file or fallback_in_file
+            if chosen:
+                last_tc_payload = chosen
                 break
 
         if last_tc_payload:
