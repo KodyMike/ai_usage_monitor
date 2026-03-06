@@ -240,7 +240,7 @@ if codex_sessions_dir.exists():
                             if obj.get('type') == 'event_msg':
                                 payload = obj.get('payload', {})
                                 if payload.get('type') == 'token_count':
-                                    lid = payload.get('rate_limits', {}).get('limit_id', '')
+                                    lid = (payload.get('rate_limits') or {}).get('limit_id', '')
                                     if lid == 'codex':
                                         main_in_file = payload
                                     else:
@@ -260,7 +260,7 @@ if codex_sessions_dir.exists():
                 break
 
         if last_tc_payload:
-            rl = last_tc_payload.get('rate_limits', {})
+            rl = last_tc_payload.get('rate_limits') or {}
             primary = rl.get('primary', {})
             secondary = rl.get('secondary', {})
             result['codex'] = {
