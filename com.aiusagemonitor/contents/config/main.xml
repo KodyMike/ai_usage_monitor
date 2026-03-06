@@ -7,8 +7,8 @@
     <group name="General">
         <entry name="refreshSecs" type="Int">
             <label>Refresh interval (seconds)</label>
-            <default>60</default>
-            <min>20</min>
+            <default>300</default>
+            <min>60</min>
             <max>1800</max>
         </entry>
         <entry name="panelTool" type="String">

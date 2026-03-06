@@ -168,6 +168,9 @@ def refresh_gemini_token(creds_path, creds):
 # Reads OAuth token from ~/.claude/.credentials.json, calls Anthropic usage API.
 # Returns 5h utilization percentage with reset time.
 # seven_day may be null for some account types (e.g. Max plan).
+# NOTE: Poll this at most every 5 minutes — Anthropic rate-limits this endpoint.
+# Real-time watching is not possible: unlike Codex (which writes rate-limit data
+# to local JSONL files), Claude's 5h utilization % is server-side only.
 claude_creds_path = Path.home() / '.claude' / '.credentials.json'
 if claude_creds_path.exists():
     try:
@@ -178,6 +181,7 @@ if claude_creds_path.exists():
             headers={
                 'Authorization': f'Bearer {token}',
                 'anthropic-beta': 'oauth-2025-04-20',
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         )
         with urllib.request.urlopen(req, timeout=10) as resp:

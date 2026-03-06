@@ -15,7 +15,7 @@ PlasmoidItem {
     property string lastError: ""
     property string lastUpdated: ""
 
-    readonly property int refreshInterval: (Plasmoid.configuration.refreshSecs || 60) * 1000
+    readonly property int refreshInterval: (Plasmoid.configuration.refreshSecs || 300) * 1000
 
     // Visibility settings (expose to children, default to true if not set)
     readonly property bool showClaude: Plasmoid.configuration.showClaude !== false
