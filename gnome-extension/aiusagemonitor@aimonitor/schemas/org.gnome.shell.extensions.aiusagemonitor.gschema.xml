@@ -3,7 +3,7 @@
   <schema id="org.gnome.shell.extensions.aiusagemonitor" path="/org/gnome/shell/extensions/aiusagemonitor/">
 
     <key name="refresh-interval" type="i">
-      <default>60</default>
+      <default>300</default>
       <summary>Refresh interval</summary>
       <description>How often to refresh usage data (in seconds)</description>
     </key>
