@@ -11,13 +11,16 @@ PlasmoidItem {
     property var claudeData: ({})
     property var codexData: ({})
     property var geminiData: ({})
-    property bool isLoading: true
+    property int pendingRefreshes: 0
+    readonly property bool isLoading: pendingRefreshes > 0
     property string lastError: ""
     property string lastUpdated: ""
 
-    readonly property int refreshInterval: (Plasmoid.configuration.refreshSecs || 300) * 1000
+    readonly property int claudeRefreshMs: (Plasmoid.configuration.claudeRefreshSecs || 600) * 1000
+    readonly property int codexRefreshMs:  (Plasmoid.configuration.codexRefreshSecs  || 60)  * 1000
+    readonly property int geminiRefreshMs: (Plasmoid.configuration.geminiRefreshSecs || 300) * 1000
 
-    // Visibility settings (expose to children, default to true if not set)
+    // Visibility settings
     readonly property bool showClaude: Plasmoid.configuration.showClaude !== false
     readonly property bool showCodex: Plasmoid.configuration.showCodex !== false
     readonly property bool showGemini: Plasmoid.configuration.showGemini !== false
@@ -50,7 +53,7 @@ PlasmoidItem {
 
         onNewData: function(sourceName, data) {
             disconnectSource(sourceName)
-            root.isLoading = false
+            root.pendingRefreshes = Math.max(0, root.pendingRefreshes - 1)
             var stdout = (data["stdout"] || "").trim()
             var stderr = (data["stderr"] || "").trim()
             if (stdout === "") {
@@ -59,9 +62,9 @@ PlasmoidItem {
             }
             try {
                 var result = JSON.parse(stdout)
-                root.claudeData = result.claude || {}
-                root.codexData  = result.codex  || {}
-                root.geminiData = result.gemini || {}
+                if (result.claude !== undefined) root.claudeData = result.claude || {}
+                if (result.codex  !== undefined) root.codexData  = result.codex  || {}
+                if (result.gemini !== undefined) root.geminiData = result.gemini || {}
                 root.lastError = ""
                 var now = new Date()
                 root.lastUpdated = now.getHours().toString().padStart(2, "0") + ":" +
@@ -73,26 +76,41 @@ PlasmoidItem {
         }
     }
 
-    function refresh() {
+    function refreshProvider(provider) {
         if (scriptPath === "") return
-        root.isLoading = true
-        runner.connectSource("python3 \"" + scriptPath + "\"")
+        root.pendingRefreshes += 1
+        runner.connectSource("python3 \"" + scriptPath + "\" " + provider)
     }
 
-    // Auto-refresh timer
+    function refresh() {
+        refreshProvider("claude")
+        refreshProvider("codex")
+        refreshProvider("gemini")
+    }
+
+    // Per-provider timers
     Timer {
-        id: refreshTimer
-        interval: root.refreshInterval
-        running: true
-        repeat: true
-        onTriggered: root.refresh()
+        id: claudeTimer
+        interval: root.claudeRefreshMs
+        running: true; repeat: true
+        onTriggered: root.refreshProvider("claude")
+    }
+    Timer {
+        id: codexTimer
+        interval: root.codexRefreshMs
+        running: true; repeat: true
+        onTriggered: root.refreshProvider("codex")
+    }
+    Timer {
+        id: geminiTimer
+        interval: root.geminiRefreshMs
+        running: true; repeat: true
+        onTriggered: root.refreshProvider("gemini")
     }
 
-    // Update timer when config changes
-    onRefreshIntervalChanged: {
-        refreshTimer.interval = root.refreshInterval
-        refreshTimer.restart()
-    }
+    onClaudeRefreshMsChanged: { claudeTimer.interval = root.claudeRefreshMs; claudeTimer.restart() }
+    onCodexRefreshMsChanged:  { codexTimer.interval  = root.codexRefreshMs;  codexTimer.restart()  }
+    onGeminiRefreshMsChanged: { geminiTimer.interval = root.geminiRefreshMs; geminiTimer.restart() }
 
     // Initial load
     Component.onCompleted: root.refresh()

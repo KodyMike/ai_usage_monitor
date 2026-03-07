@@ -2,16 +2,14 @@ import Adw from 'gi://Adw';
 import Gtk from 'gi://Gtk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-const REFRESH_LABELS = [
-    '20 seconds',
-    '1 minute',
-    '2 minutes',
-    '5 minutes',
-    '10 minutes',
-    '30 minutes',
-];
+const CLAUDE_REFRESH_LABELS = ['1 minute', '5 minutes', '10 minutes', '30 minutes'];
+const CLAUDE_REFRESH_VALUES = [60, 300, 600, 1800];
 
-const REFRESH_VALUES = [20, 60, 120, 300, 600, 1800];
+const CODEX_REFRESH_LABELS = ['10 seconds', '30 seconds', '1 minute', '5 minutes'];
+const CODEX_REFRESH_VALUES = [10, 30, 60, 300];
+
+const GEMINI_REFRESH_LABELS = ['1 minute', '5 minutes', '10 minutes', '30 minutes'];
+const GEMINI_REFRESH_VALUES = [60, 300, 600, 1800];
 const PANEL_TOOL_LABELS = ['Claude Code', 'OpenAI Codex', 'Gemini CLI'];
 const PANEL_TOOL_VALUES = ['claude', 'codex', 'gemini'];
 const DISPLAY_MODE_LABELS = ['Ring and percentage', 'Ring only', 'Percentage only'];
@@ -43,17 +41,27 @@ export default class AIUsageMonitorPreferences extends ExtensionPreferences {
         });
 
         const refreshGroup = new Adw.PreferencesGroup({
-            title: 'Refresh Interval',
-            description: 'How often to update usage data',
+            title: 'Refresh Intervals',
+            description: 'How often to update each provider',
         });
 
-        const currentRefresh = settings.get_int('refresh-interval');
-        const refreshIndex = REFRESH_VALUES.indexOf(currentRefresh);
         refreshGroup.add(createDropdownRow(
-            'Refresh every',
-            REFRESH_LABELS,
-            refreshIndex,
-            selected => settings.set_int('refresh-interval', REFRESH_VALUES[selected])
+            'Claude Code',
+            CLAUDE_REFRESH_LABELS,
+            Math.max(0, CLAUDE_REFRESH_VALUES.indexOf(settings.get_int('claude-refresh-interval'))),
+            selected => settings.set_int('claude-refresh-interval', CLAUDE_REFRESH_VALUES[selected])
+        ));
+        refreshGroup.add(createDropdownRow(
+            'OpenAI Codex',
+            CODEX_REFRESH_LABELS,
+            Math.max(0, CODEX_REFRESH_VALUES.indexOf(settings.get_int('codex-refresh-interval'))),
+            selected => settings.set_int('codex-refresh-interval', CODEX_REFRESH_VALUES[selected])
+        ));
+        refreshGroup.add(createDropdownRow(
+            'Gemini CLI',
+            GEMINI_REFRESH_LABELS,
+            Math.max(0, GEMINI_REFRESH_VALUES.indexOf(settings.get_int('gemini-refresh-interval'))),
+            selected => settings.set_int('gemini-refresh-interval', GEMINI_REFRESH_VALUES[selected])
         ));
 
         const panelGroup = new Adw.PreferencesGroup({
