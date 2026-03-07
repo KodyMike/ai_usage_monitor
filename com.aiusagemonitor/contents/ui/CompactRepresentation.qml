@@ -136,5 +136,14 @@ Item {
             font.pixelSize: 11
             color: Kirigami.Theme.disabledTextColor
         }
+
+        // Error fallback — script failed, show ! instead of blank
+        PC3.Label {
+            visible: !root.isLoading && activeData.installed !== true && root.lastError !== ""
+            text: "!"
+            font.pixelSize: 12
+            font.bold: true
+            color: "#ef4444"
+        }
     }
 }
