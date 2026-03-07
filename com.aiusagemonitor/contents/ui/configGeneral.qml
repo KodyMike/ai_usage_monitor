@@ -4,7 +4,9 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Kirigami.FormLayout {
-    property int cfg_refreshSecs: 60
+    property int cfg_claudeRefreshSecs: 600
+    property int cfg_codexRefreshSecs: 60
+    property int cfg_geminiRefreshSecs: 300
     property string cfg_panelTool: "claude"
     property int cfg_panelDisplayMode: 0
 
@@ -13,31 +15,49 @@ Kirigami.FormLayout {
     property bool cfg_showCodex: true
     property bool cfg_showGemini: true
 
-    // ── Refresh ────────────────────────────────────────────────────────────
+    // ── Refresh intervals ──────────────────────────────────────────────────
+    Kirigami.Separator {
+        Kirigami.FormData.label: "Refresh intervals"
+        Kirigami.FormData.isSection: true
+    }
+
     QQC2.ComboBox {
-        id: refreshCombo
-        Kirigami.FormData.label: "Refresh every:"
-
+        Kirigami.FormData.label: "Claude Code:"
         model: [
-            { text: "20 seconds",  value: 20  },
-            { text: "1 minute",    value: 60  },
-            { text: "2 minutes",   value: 120 },
-            { text: "5 minutes",   value: 300 },
-            { text: "10 minutes",  value: 600 },
-            { text: "30 minutes",  value: 1800 },
+            { text: "1 minute",   value: 60   },
+            { text: "5 minutes",  value: 300  },
+            { text: "10 minutes", value: 600  },
+            { text: "30 minutes", value: 1800 },
         ]
-
         textRole: "text"
+        currentIndex: { var v = cfg_claudeRefreshSecs; for (var i = 0; i < model.length; i++) { if (model[i].value === v) return i } return 2 }
+        onActivated: cfg_claudeRefreshSecs = model[currentIndex].value
+    }
 
-        currentIndex: {
-            var v = cfg_refreshSecs
-            for (var i = 0; i < model.length; i++) {
-                if (model[i].value === v) return i
-            }
-            return 1  // default to 1 minute
-        }
+    QQC2.ComboBox {
+        Kirigami.FormData.label: "OpenAI Codex:"
+        model: [
+            { text: "10 seconds", value: 10  },
+            { text: "30 seconds", value: 30  },
+            { text: "1 minute",   value: 60  },
+            { text: "5 minutes",  value: 300 },
+        ]
+        textRole: "text"
+        currentIndex: { var v = cfg_codexRefreshSecs; for (var i = 0; i < model.length; i++) { if (model[i].value === v) return i } return 2 }
+        onActivated: cfg_codexRefreshSecs = model[currentIndex].value
+    }
 
-        onActivated: cfg_refreshSecs = model[currentIndex].value
+    QQC2.ComboBox {
+        Kirigami.FormData.label: "Gemini CLI:"
+        model: [
+            { text: "1 minute",   value: 60   },
+            { text: "5 minutes",  value: 300  },
+            { text: "10 minutes", value: 600  },
+            { text: "30 minutes", value: 1800 },
+        ]
+        textRole: "text"
+        currentIndex: { var v = cfg_geminiRefreshSecs; for (var i = 0; i < model.length; i++) { if (model[i].value === v) return i } return 1 }
+        onActivated: cfg_geminiRefreshSecs = model[currentIndex].value
     }
 
     // ── Tool shown in panel ────────────────────────────────────────────────

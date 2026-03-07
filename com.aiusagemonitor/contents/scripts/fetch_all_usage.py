@@ -17,6 +17,9 @@ import sys
 result = {}
 today = datetime.now(timezone.utc).date()
 
+# Optional provider filter: python3 fetch_all_usage.py [claude|codex|gemini]
+_only = sys.argv[1] if len(sys.argv) > 1 else None
+
 
 def unix_to_iso(ts):
     """Convert Unix timestamp (int) to ISO 8601 string."""
@@ -165,236 +168,210 @@ def refresh_gemini_token(creds_path, creds):
 
 
 # ── CLAUDE CODE ──────────────────────────────────────────────────────────────
-# Reads OAuth token from ~/.claude/.credentials.json, calls Anthropic usage API.
-# Returns 5h utilization percentage with reset time.
-# seven_day may be null for some account types (e.g. Max plan).
-# NOTE: Poll this at most every 5 minutes — Anthropic rate-limits this endpoint.
-# Real-time watching is not possible: unlike Codex (which writes rate-limit data
-# to local JSONL files), Claude's 5h utilization % is server-side only.
-claude_creds_path = Path.home() / '.claude' / '.credentials.json'
-if claude_creds_path.exists():
-    try:
-        creds = json.loads(claude_creds_path.read_text())
-        token = creds['claudeAiOauth']['accessToken']
-        req = urllib.request.Request(
-            'https://api.anthropic.com/api/oauth/usage',
-            headers={
-                'Authorization': f'Bearer {token}',
-                'anthropic-beta': 'oauth-2025-04-20',
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+if not _only or _only == 'claude':
+    claude_creds_path = Path.home() / '.claude' / '.credentials.json'
+    if claude_creds_path.exists():
+        try:
+            creds = json.loads(claude_creds_path.read_text())
+            token = creds['claudeAiOauth']['accessToken']
+            req = urllib.request.Request(
+                'https://api.anthropic.com/api/oauth/usage',
+                headers={
+                    'Authorization': f'Bearer {token}',
+                    'anthropic-beta': 'oauth-2025-04-20',
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+
+            five_hour = data.get('five_hour') or {}
+            seven_day = data.get('seven_day') or {}
+
+            result['claude'] = {
+                'installed': True,
+                'five_hour_pct': round(five_hour.get('utilization') or 0),
+                'five_hour_reset': five_hour.get('resets_at'),
+                'seven_day_pct': round(seven_day.get('utilization') or 0) if seven_day else None,
+                'seven_day_reset': seven_day.get('resets_at') if seven_day else None,
             }
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-
-        five_hour = data.get('five_hour') or {}
-        seven_day = data.get('seven_day') or {}
-
-        result['claude'] = {
-            'installed': True,
-            'five_hour_pct': round(five_hour.get('utilization') or 0),
-            'five_hour_reset': five_hour.get('resets_at'),
-            'seven_day_pct': round(seven_day.get('utilization') or 0) if seven_day else None,
-            'seven_day_reset': seven_day.get('resets_at') if seven_day else None,
-        }
-    except urllib.error.HTTPError as e:
-        result['claude'] = {
-            'installed': True,
-            **classify_http_failure('claude', e.code, read_http_error_body(e)),
-        }
-    except Exception as e:
-        result['claude'] = {'installed': True, **classify_exception_failure(e)}
-else:
-    result['claude'] = {'installed': False}
+        except urllib.error.HTTPError as e:
+            result['claude'] = {
+                'installed': True,
+                **classify_http_failure('claude', e.code, read_http_error_body(e)),
+            }
+        except Exception as e:
+            result['claude'] = {'installed': True, **classify_exception_failure(e)}
+    else:
+        result['claude'] = {'installed': False}
 
 
 # ── OPENAI CODEX ─────────────────────────────────────────────────────────────
-# Parses ~/.codex/sessions/**/*.jsonl files.
-# Rate-limit data is in event_msg events where payload.type == "token_count".
-# rate_limits.primary = 5h window (300min), secondary = 7d window (10080min).
-# resets_at is a Unix timestamp integer — convert to ISO string.
-# Model is stored in turn_context events.
-codex_sessions_dir = Path.home() / '.codex' / 'sessions'
-if codex_sessions_dir.exists():
-    files = sorted(glob.glob(str(codex_sessions_dir / '**' / '*.jsonl'), recursive=True))
-    if files:
-        last_tc_payload = None
-        last_model = ''
+if not _only or _only == 'codex':
+    codex_sessions_dir = Path.home() / '.codex' / 'sessions'
+    if codex_sessions_dir.exists():
+        files = sorted(glob.glob(str(codex_sessions_dir / '**' / '*.jsonl'), recursive=True))
+        if files:
+            last_tc_payload = None
+            last_model = ''
 
-        # Walk from newest to oldest, stop at first session with rate limit data.
-        # Codex now emits multiple token_count events per turn with different
-        # limit_ids (e.g. "codex" for the main plan limit, "codex_bengalfox" for
-        # a model-specific limit).  Prefer the main "codex" limit_id since it
-        # reflects overall plan usage; fall back to any other if not found.
-        for sf in reversed(files):
-            main_in_file = None   # limit_id == "codex"
-            fallback_in_file = None  # any other token_count
-            try:
-                with open(sf, errors='replace') as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            obj = json.loads(line)
-                            if obj.get('type') == 'event_msg':
-                                payload = obj.get('payload', {})
-                                if payload.get('type') == 'token_count':
-                                    lid = (payload.get('rate_limits') or {}).get('limit_id', '')
-                                    if lid == 'codex':
-                                        main_in_file = payload
-                                    else:
-                                        fallback_in_file = payload
-                            elif obj.get('type') == 'turn_context':
-                                m = obj.get('payload', {}).get('model', '')
-                                if m:
-                                    last_model = m
-                        except json.JSONDecodeError:
-                            continue
-            except OSError:
-                continue
+            for sf in reversed(files):
+                main_in_file = None
+                fallback_in_file = None
+                try:
+                    with open(sf, errors='replace') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                                if obj.get('type') == 'event_msg':
+                                    payload = obj.get('payload') or {}
+                                    if payload.get('type') == 'token_count':
+                                        lid = (payload.get('rate_limits') or {}).get('limit_id', '')
+                                        if lid == 'codex':
+                                            main_in_file = payload
+                                        elif payload.get('rate_limits') is not None:
+                                            # Only use as fallback if rate_limits is not null
+                                            fallback_in_file = payload
+                                elif obj.get('type') == 'turn_context':
+                                    m = (obj.get('payload') or {}).get('model', '')
+                                    if m:
+                                        last_model = m
+                            except json.JSONDecodeError:
+                                continue
+                except OSError:
+                    continue
 
-            chosen = main_in_file or fallback_in_file
-            if chosen:
-                last_tc_payload = chosen
-                break
+                chosen = main_in_file or fallback_in_file
+                if chosen:
+                    last_tc_payload = chosen
+                    break
 
-        if last_tc_payload:
-            rl = last_tc_payload.get('rate_limits') or {}
-            primary = rl.get('primary', {})
-            secondary = rl.get('secondary', {})
-            result['codex'] = {
-                'installed': True,
-                'five_hour_pct': primary.get('used_percent', 0),
-                'seven_day_pct': secondary.get('used_percent', 0),
-                'five_hour_reset': unix_to_iso(primary.get('resets_at')),
-                'seven_day_reset': unix_to_iso(secondary.get('resets_at')),
-                'plan_type': rl.get('plan_type') or '',
-                'model': last_model,
-            }
+            if last_tc_payload:
+                rl = last_tc_payload.get('rate_limits') or {}
+                primary = rl.get('primary') or {}
+                secondary = rl.get('secondary') or {}
+                result['codex'] = {
+                    'installed': True,
+                    'five_hour_pct': primary.get('used_percent', 0),
+                    'seven_day_pct': secondary.get('used_percent', 0),
+                    'five_hour_reset': unix_to_iso(primary.get('resets_at')),
+                    'seven_day_reset': unix_to_iso(secondary.get('resets_at')),
+                    'plan_type': rl.get('plan_type') or '',
+                    'model': last_model,
+                }
+            else:
+                result['codex'] = {'installed': True, 'has_data': False}
         else:
             result['codex'] = {'installed': True, 'has_data': False}
     else:
-        result['codex'] = {'installed': True, 'has_data': False}
-else:
-    result['codex'] = {'installed': False}
+        result['codex'] = {'installed': False}
 
 
 # ── GEMINI CLI ────────────────────────────────────────────────────────────────
-# Auth from ~/.gemini/oauth_creds.json.
-# Step 1: loadCodeAssist → get managed project ID (cloudaicompanionProject).
-# Step 2: retrieveUserQuota → per-model remainingFraction + resetTime.
-# Implements automatic token refresh with retry logic (max 3 attempts).
-gemini_creds_path = Path.home() / '.gemini' / 'oauth_creds.json'
-if gemini_creds_path.exists():
-    creds = {}
-    max_retries = 3
-    retry_count = 0
-    last_error = None
+if not _only or _only == 'gemini':
+    gemini_creds_path = Path.home() / '.gemini' / 'oauth_creds.json'
+    if gemini_creds_path.exists():
+        creds = {}
+        max_retries = 3
+        retry_count = 0
+        last_error = None
 
-    while retry_count < max_retries:
-        try:
-            creds = json.loads(gemini_creds_path.read_text())
-            token = creds['access_token']
+        while retry_count < max_retries:
+            try:
+                creds = json.loads(gemini_creds_path.read_text())
+                token = creds['access_token']
 
-            base = 'https://cloudcode-pa.googleapis.com/v1internal'
-            headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+                base = 'https://cloudcode-pa.googleapis.com/v1internal'
+                headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
 
-            # Step 1: loadCodeAssist to get managed project ID
-            load_body = json.dumps({
-                'cloudaicompanionProject': None,
-                'metadata': {'ideType': 'IDE_UNSPECIFIED', 'platform': 'PLATFORM_UNSPECIFIED', 'pluginType': 'GEMINI'},
-            }).encode()
-            req = urllib.request.Request(f'{base}:loadCodeAssist', data=load_body, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                load_res = json.loads(resp.read())
+                load_body = json.dumps({
+                    'cloudaicompanionProject': None,
+                    'metadata': {'ideType': 'IDE_UNSPECIFIED', 'platform': 'PLATFORM_UNSPECIFIED', 'pluginType': 'GEMINI'},
+                }).encode()
+                req = urllib.request.Request(f'{base}:loadCodeAssist', data=load_body, headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    load_res = json.loads(resp.read())
 
-            project_id = load_res.get('cloudaicompanionProject')
-            if not project_id:
-                raise ValueError('No cloudaicompanionProject in loadCodeAssist response')
+                project_id = load_res.get('cloudaicompanionProject')
+                if not project_id:
+                    raise ValueError('No cloudaicompanionProject in loadCodeAssist response')
 
-            # Step 2: retrieveUserQuota
-            quota_body = json.dumps({'project': project_id}).encode()
-            req2 = urllib.request.Request(f'{base}:retrieveUserQuota', data=quota_body, headers=headers)
-            with urllib.request.urlopen(req2, timeout=10) as resp2:
-                quota_res = json.loads(resp2.read())
+                quota_body = json.dumps({'project': project_id}).encode()
+                req2 = urllib.request.Request(f'{base}:retrieveUserQuota', data=quota_body, headers=headers)
+                with urllib.request.urlopen(req2, timeout=10) as resp2:
+                    quota_res = json.loads(resp2.read())
 
-            # Filter out _vertex duplicates, keep base model IDs only
-            buckets = [b for b in quota_res.get('buckets', []) if not b.get('modelId', '').endswith('_vertex')]
+                buckets = [b for b in quota_res.get('buckets', []) if not b.get('modelId', '').endswith('_vertex')]
 
-            # Use the model with lowest remaining (most used) as the primary indicator
-            if buckets:
-                most_used = min(buckets, key=lambda b: b.get('remainingFraction', 1.0))
-                used_pct = round((1.0 - most_used.get('remainingFraction', 1.0)) * 100)
-                reset_time = most_used.get('resetTime')
-                primary_model = most_used.get('modelId', '')
-            else:
-                used_pct = 0
-                reset_time = None
-                primary_model = ''
+                if buckets:
+                    most_used = min(buckets, key=lambda b: b.get('remainingFraction', 1.0))
+                    used_pct = round((1.0 - most_used.get('remainingFraction', 1.0)) * 100)
+                    reset_time = most_used.get('resetTime')
+                    primary_model = most_used.get('modelId', '')
+                else:
+                    used_pct = 0
+                    reset_time = None
+                    primary_model = ''
 
+                result['gemini'] = {
+                    'installed': True,
+                    'authenticated': True,
+                    'used_pct': used_pct,
+                    'reset_time': reset_time,
+                    'model': primary_model,
+                    'buckets': [
+                        {
+                            'model': b.get('modelId', ''),
+                            'used_pct': round((1.0 - b.get('remainingFraction', 1.0)) * 100),
+                            'reset_time': b.get('resetTime'),
+                        }
+                        for b in buckets
+                    ],
+                }
+                break
+
+            except urllib.error.HTTPError as e:
+                retry_count += 1
+                body = read_http_error_body(e)
+                if e.code == 401 and retry_count < max_retries and creds.get('refresh_token'):
+                    success, new_creds, refresh_error = refresh_gemini_token(gemini_creds_path, creds)
+                    if success:
+                        creds = new_creds
+                        continue
+                    else:
+                        last_error = {'fail_reason': 'auth_failed', 'error': refresh_error, 'http_code': 401}
+                        if retry_count >= max_retries:
+                            break
+                        continue
+                else:
+                    last_error = classify_http_failure('gemini', e.code, body, context={'creds': creds})
+                    break
+
+            except Exception as e:
+                retry_count += 1
+                last_error = classify_exception_failure(e)
+                if retry_count >= max_retries:
+                    break
+
+        if last_error:
             result['gemini'] = {
                 'installed': True,
-                'authenticated': True,
-                'used_pct': used_pct,
-                'reset_time': reset_time,
-                'model': primary_model,
-                'buckets': [
-                    {
-                        'model': b.get('modelId', ''),
-                        'used_pct': round((1.0 - b.get('remainingFraction', 1.0)) * 100),
-                        'reset_time': b.get('resetTime'),
-                    }
-                    for b in buckets
-                ],
+                'authenticated': last_error.get('fail_reason') not in ('auth_required', 'auth_failed'),
+                'retry_count': retry_count,
+                **last_error,
             }
-            break  # Success - exit retry loop
-
-        except urllib.error.HTTPError as e:
-            retry_count += 1
-            body = read_http_error_body(e)
-
-            # If 401 and we have refresh token, try to refresh
-            if e.code == 401 and retry_count < max_retries and creds.get('refresh_token'):
-                success, new_creds, refresh_error = refresh_gemini_token(gemini_creds_path, creds)
-                if success:
-                    creds = new_creds
-                    continue  # Retry with new token
-                else:
-                    # Token refresh failed - show error after all retries
-                    last_error = {'fail_reason': 'auth_failed', 'error': refresh_error, 'http_code': 401}
-                    if retry_count >= max_retries:
-                        break
-                    continue
-            else:
-                # Other HTTP errors or max retries reached
-                last_error = classify_http_failure('gemini', e.code, body, context={'creds': creds})
-                break
-
-        except Exception as e:
-            retry_count += 1
-            last_error = classify_exception_failure(e)
-            if retry_count >= max_retries:
-                break
-
-    # If we exhausted retries or got an error, report it
-    if last_error:
-        result['gemini'] = {
-            'installed': True,
-            'authenticated': last_error.get('fail_reason') not in ('auth_required', 'auth_failed'),
-            'retry_count': retry_count,
-            **last_error,
-        }
-    elif 'gemini' not in result:
-        # Should not happen, but handle edge case
-        result['gemini'] = {
-            'installed': True,
-            'authenticated': False,
-            'error': f'Failed after {retry_count} attempts',
-            'fail_reason': 'unknown_error',
-        }
-else:
-    result['gemini'] = {'installed': False}
+        elif 'gemini' not in result:
+            result['gemini'] = {
+                'installed': True,
+                'authenticated': False,
+                'error': f'Failed after {retry_count} attempts',
+                'fail_reason': 'unknown_error',
+            }
+    else:
+        result['gemini'] = {'installed': False}
 
 
 print(json.dumps(result))

@@ -26,8 +26,12 @@ class AIUsageIndicator extends PanelMenu.Button {
         this._extensionPath = extensionPath;
         this._settings = settings;
         this._extension = extension;
-        this._timeoutId = null;
-        this._cancellable = null;
+        this._claudeTimeoutId = null;
+        this._codexTimeoutId = null;
+        this._geminiTimeoutId = null;
+        this._claudeCancellable = null;
+        this._codexCancellable = null;
+        this._geminiCancellable = null;
         this._claudeData = {};
         this._codexData = {};
         this._geminiData = {};
@@ -75,8 +79,12 @@ class AIUsageIndicator extends PanelMenu.Button {
 
         this._settingsChangedId = this._settings.connect('changed', this._onSettingsChanged.bind(this));
 
-        this._refresh();
-        this._scheduleRefresh();
+        this._refreshProvider('claude');
+        this._refreshProvider('codex');
+        this._refreshProvider('gemini');
+        this._scheduleRefresh('claude');
+        this._scheduleRefresh('codex');
+        this._scheduleRefresh('gemini');
     }
 
     _buildMenu() {
@@ -428,21 +436,22 @@ class AIUsageIndicator extends PanelMenu.Button {
         return `in ${mins}m`;
     }
 
-    _refresh() {
-        if (this._cancellable)
-            this._cancellable.cancel();
-        this._cancellable = new Gio.Cancellable();
+    _refreshProvider(provider) {
+        let cancellableKey = `_${provider}Cancellable`;
+        if (this[cancellableKey])
+            this[cancellableKey].cancel();
+        this[cancellableKey] = new Gio.Cancellable();
 
-        this._isLoading = true;
+        this._isLoading = !this._claudeData.installed && !this._codexData.installed && !this._geminiData.installed;
         this._updatePanelIcon();
 
         let proc;
         try {
             proc = new Gio.Subprocess({
-                argv: ['python3', `${this._extensionPath}/scripts/fetch_all_usage.py`],
+                argv: ['python3', `${this._extensionPath}/scripts/fetch_all_usage.py`, provider],
                 flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             });
-            proc.init(this._cancellable);
+            proc.init(this[cancellableKey]);
         } catch (e) {
             this._isLoading = false;
             this._updatePanelIcon();
@@ -450,14 +459,14 @@ class AIUsageIndicator extends PanelMenu.Button {
             return;
         }
 
-        proc.communicate_utf8_async(null, this._cancellable, (source, result) => {
+        proc.communicate_utf8_async(null, this[cancellableKey], (source, result) => {
             try {
                 let [, stdout] = source.communicate_utf8_finish(result);
                 if (stdout?.trim()) {
                     let parsed = JSON.parse(stdout.trim());
-                    this._claudeData = parsed.claude || {};
-                    this._codexData = parsed.codex || {};
-                    this._geminiData = parsed.gemini || {};
+                    if (parsed.claude !== undefined) this._claudeData = parsed.claude || {};
+                    if (parsed.codex  !== undefined) this._codexData  = parsed.codex  || {};
+                    if (parsed.gemini !== undefined) this._geminiData = parsed.gemini || {};
                 }
             } catch (e) {
                 if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
@@ -470,33 +479,44 @@ class AIUsageIndicator extends PanelMenu.Button {
         });
     }
 
-    _scheduleRefresh() {
-        if (this._timeoutId)
-            GLib.source_remove(this._timeoutId);
+    _refresh() {
+        this._refreshProvider('claude');
+        this._refreshProvider('codex');
+        this._refreshProvider('gemini');
+    }
 
-        let interval = this._settings.get_int('refresh-interval');
-        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, interval, () => {
-            this._refresh();
+    _scheduleRefresh(provider) {
+        let timeoutKey = `_${provider}TimeoutId`;
+        if (this[timeoutKey])
+            GLib.source_remove(this[timeoutKey]);
+
+        let interval = this._settings.get_int(`${provider}-refresh-interval`);
+        this[timeoutKey] = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, interval, () => {
+            this._refreshProvider(provider);
             return GLib.SOURCE_CONTINUE;
         });
     }
 
     _onSettingsChanged(_settings, key) {
-        if (key === 'refresh-interval')
-            this._scheduleRefresh();
+        if (key === 'claude-refresh-interval') this._scheduleRefresh('claude');
+        else if (key === 'codex-refresh-interval') this._scheduleRefresh('codex');
+        else if (key === 'gemini-refresh-interval') this._scheduleRefresh('gemini');
         this._updatePanelIcon();
         this._updateContent();
     }
 
     destroy() {
-        if (this._cancellable) {
-            this._cancellable.cancel();
-            this._cancellable = null;
-        }
-
-        if (this._timeoutId) {
-            GLib.source_remove(this._timeoutId);
-            this._timeoutId = null;
+        for (const provider of ['claude', 'codex', 'gemini']) {
+            const cancellableKey = `_${provider}Cancellable`;
+            const timeoutKey = `_${provider}TimeoutId`;
+            if (this[cancellableKey]) {
+                this[cancellableKey].cancel();
+                this[cancellableKey] = null;
+            }
+            if (this[timeoutKey]) {
+                GLib.source_remove(this[timeoutKey]);
+                this[timeoutKey] = null;
+            }
         }
 
         if (this._settingsChangedId) {

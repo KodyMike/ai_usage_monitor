@@ -167,7 +167,7 @@ Item {
                 }
 
                 PC3.Label {
-                    visible: cd.seven_day_pct === null || cd.seven_day_pct === undefined
+                    visible: !cd.error && (cd.seven_day_pct === null || cd.seven_day_pct === undefined)
                     text: "7-day limit: not tracked on this plan"
                     font.pixelSize: 10
                     color: Kirigami.Theme.disabledTextColor

@@ -2,10 +2,22 @@
 <schemalist>
   <schema id="org.gnome.shell.extensions.aiusagemonitor" path="/org/gnome/shell/extensions/aiusagemonitor/">
 
-    <key name="refresh-interval" type="i">
+    <key name="claude-refresh-interval" type="i">
+      <default>600</default>
+      <summary>Claude refresh interval</summary>
+      <description>How often to refresh Claude usage data (in seconds)</description>
+    </key>
+
+    <key name="codex-refresh-interval" type="i">
+      <default>60</default>
+      <summary>Codex refresh interval</summary>
+      <description>How often to refresh Codex usage data (in seconds)</description>
+    </key>
+
+    <key name="gemini-refresh-interval" type="i">
       <default>300</default>
-      <summary>Refresh interval</summary>
-      <description>How often to refresh usage data (in seconds)</description>
+      <summary>Gemini refresh interval</summary>
+      <description>How often to refresh Gemini usage data (in seconds)</description>
     </key>
 
     <key name="panel-tool" type="s">
