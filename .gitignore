@@ -1,0 +1,23 @@
+
+
+# Build artifacts
+*.plasmoid
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Codebase index
+.codebase
+
+# Codemap cache
+.codemap/
+.codemap.db
+.codemap.db-shm
+.codemap.db-wal
+
+# Wave Guard internals
+.wave-guard/
+
+# External project copies
+ravidulundu/
