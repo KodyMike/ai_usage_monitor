@@ -127,21 +127,25 @@ Item {
                     Item { Layout.fillWidth: true }
                 }
 
-                // Error message (separate row)
+                // Error / stale-info message (separate row).
+                // When stale=true we reuse this label with a softer colour to indicate
+                // the bars below are cached data, not a hard failure.
                 PC3.Label {
                     visible: !!cd.error
                     text: cd.error || ""
-                    color: Kirigami.Theme.negativeTextColor
+                    color: cd.stale === true
+                        ? Kirigami.Theme.neutralTextColor
+                        : Kirigami.Theme.negativeTextColor
                     font.pixelSize: 10
                     wrapMode: Text.Wrap
                     width: 320
                     Layout.preferredWidth: 320
                 }
 
-                // 5h bar
+                // 5h bar — also shown when stale so cached data stays visible.
                 Loader {
                     Layout.fillWidth: true
-                    active: cd.five_hour_pct !== undefined && !cd.error
+                    active: cd.five_hour_pct !== undefined && (!cd.error || cd.stale === true)
 
                     sourceComponent: UsageBar {
                         label: "5h"
@@ -155,7 +159,7 @@ Item {
                 // 7d bar (only if data available)
                 Loader {
                     Layout.fillWidth: true
-                    active: cd.seven_day_pct !== null && cd.seven_day_pct !== undefined && !cd.error
+                    active: cd.seven_day_pct !== null && cd.seven_day_pct !== undefined && (!cd.error || cd.stale === true)
 
                     sourceComponent: UsageBar {
                         label: "7d"
@@ -167,7 +171,7 @@ Item {
                 }
 
                 PC3.Label {
-                    visible: !cd.error && (cd.seven_day_pct === null || cd.seven_day_pct === undefined)
+                    visible: (!cd.error || cd.stale === true) && (cd.seven_day_pct === null || cd.seven_day_pct === undefined)
                     text: "7-day limit: not tracked on this plan"
                     font.pixelSize: 10
                     color: Kirigami.Theme.disabledTextColor
@@ -284,10 +288,11 @@ Item {
                     }
                 }
 
-                // Collapsed: single overview bar (model with lowest remaining fraction)
+                // Collapsed: single overview bar (model with lowest remaining fraction).
+                // Also shown when stale so cached data stays visible.
                 Loader {
                     Layout.fillWidth: true
-                    active: gd.used_pct !== undefined && !gd.error && !fullRoot.geminiExpanded
+                    active: gd.used_pct !== undefined && (!gd.error || gd.stale === true) && !fullRoot.geminiExpanded
 
                     sourceComponent: UsageBar {
                         label: gd.model ? fullRoot.prettyGeminiModel(gd.model) : "Gemini quota"
@@ -315,7 +320,9 @@ Item {
                     visible: !!gd.error
                     text: gd.error || ""
                     font.pixelSize: 10
-                    color: Kirigami.Theme.negativeTextColor
+                    color: gd.stale === true
+                        ? Kirigami.Theme.neutralTextColor
+                        : Kirigami.Theme.negativeTextColor
                     wrapMode: Text.Wrap
                     width: 320
                     Layout.preferredWidth: 320

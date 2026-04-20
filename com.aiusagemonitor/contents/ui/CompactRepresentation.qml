@@ -115,7 +115,9 @@ Item {
                 text: compactRoot.activeText
                 font.pixelSize: 9
                 font.bold: true
-                color: Qt.color(compactRoot.ringColor())
+                color: compactRoot.activeData.stale === true
+                    ? Kirigami.Theme.disabledTextColor
+                    : Qt.color(compactRoot.ringColor())
                 horizontalAlignment: Text.AlignHCenter
             }
         }
@@ -126,7 +128,9 @@ Item {
             text: compactRoot.activeText
             font.pixelSize: 12
             font.bold: true
-            color: Qt.color(compactRoot.ringColor())
+            color: compactRoot.activeData.stale === true
+                ? Kirigami.Theme.disabledTextColor
+                : Qt.color(compactRoot.ringColor())
         }
 
         // Loading fallback
