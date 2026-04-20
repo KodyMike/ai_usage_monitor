@@ -4,6 +4,10 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Kirigami.FormLayout {
+    // KCM sets `title` on the config page root; declaring it avoids a
+    // "FormLayout does not have a property called title" warning.
+    property string title: ""
+
     property int cfg_claudeRefreshSecs: 600
     property int cfg_codexRefreshSecs: 60
     property int cfg_geminiRefreshSecs: 300
@@ -14,6 +18,17 @@ Kirigami.FormLayout {
     property bool cfg_showClaude: true
     property bool cfg_showCodex: true
     property bool cfg_showGemini: true
+
+    // Defaults that KConfig uses for the "Reset" button. Values must match
+    // the <default> entries in config/main.xml.
+    property int cfg_claudeRefreshSecsDefault: 600
+    property int cfg_codexRefreshSecsDefault: 60
+    property int cfg_geminiRefreshSecsDefault: 300
+    property string cfg_panelToolDefault: "claude"
+    property int cfg_panelDisplayModeDefault: 0
+    property bool cfg_showClaudeDefault: true
+    property bool cfg_showCodexDefault: true
+    property bool cfg_showGeminiDefault: true
 
     // ── Refresh intervals ──────────────────────────────────────────────────
     Kirigami.Separator {
