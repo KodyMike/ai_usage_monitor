@@ -20,6 +20,81 @@ today = datetime.now(timezone.utc).date()
 # Optional provider filter: python3 fetch_all_usage.py [claude|codex|gemini]
 _only = sys.argv[1] if len(sys.argv) > 1 else None
 
+CACHE_DIR = Path.home() / '.cache' / 'com.aiusagemonitor'
+
+
+def read_cache(provider):
+    p = CACHE_DIR / f'{provider}.json'
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
+def write_cache(provider, data):
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        p = CACHE_DIR / f'{provider}.json'
+        tmp = p.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(data))
+        tmp.replace(p)
+    except OSError:
+        pass  # cache is best-effort
+
+
+def format_age(ts):
+    """Format unix timestamp as 'Xm', 'Xh', 'Xd' relative to now."""
+    if not ts:
+        return ''
+    try:
+        delta = int(datetime.now(timezone.utc).timestamp()) - int(ts)
+    except Exception:
+        return ''
+    if delta < 60:
+        return '<1m'
+    if delta < 3600:
+        return f'{delta // 60}m'
+    if delta < 86400:
+        return f'{delta // 3600}h'
+    return f'{delta // 86400}d'
+
+
+def apply_cache(provider, data):
+    """
+    Wrap a provider's result with cache fallback behavior.
+    - Fresh successful fetch: stamp fetched_at, mark stale=false, persist cache.
+    - Fetch error with cache available: return cached data, mark stale=true,
+      and extend the error message to explain we're showing cached data.
+    - Fetch error without cache, or provider not installed / no data: pass through.
+    """
+    is_error = 'fail_reason' in data
+    has_data = (
+        data.get('installed') is True
+        and not is_error
+        and data.get('has_data') is not False
+    )
+
+    if has_data:
+        data['fetched_at'] = int(datetime.now(timezone.utc).timestamp())
+        data['stale'] = False
+        write_cache(provider, data)
+        return data
+
+    if is_error:
+        cached = read_cache(provider)
+        if cached is not None:
+            age = format_age(cached.get('fetched_at'))
+            reason = data.get('error') or 'Unavailable'
+            suffix = f' · showing cached data ({age} old)' if age else ' · showing cached data'
+            cached['stale'] = True
+            cached['error'] = reason + suffix
+            cached['fail_reason'] = data.get('fail_reason', 'unknown_error')
+            return cached
+
+    return data
+
 
 def unix_to_iso(ts):
     """Convert Unix timestamp (int) to ISO 8601 string."""
@@ -205,6 +280,8 @@ if not _only or _only == 'claude':
     else:
         result['claude'] = {'installed': False}
 
+    result['claude'] = apply_cache('claude', result['claude'])
+
 
 # ── OPENAI CODEX ─────────────────────────────────────────────────────────────
 if not _only or _only == 'codex':
@@ -268,6 +345,8 @@ if not _only or _only == 'codex':
             result['codex'] = {'installed': True, 'has_data': False}
     else:
         result['codex'] = {'installed': False}
+
+    result['codex'] = apply_cache('codex', result['codex'])
 
 
 # ── GEMINI CLI ────────────────────────────────────────────────────────────────
@@ -372,6 +451,8 @@ if not _only or _only == 'gemini':
             }
     else:
         result['gemini'] = {'installed': False}
+
+    result['gemini'] = apply_cache('gemini', result['gemini'])
 
 
 print(json.dumps(result))
