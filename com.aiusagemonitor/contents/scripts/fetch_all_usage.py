@@ -84,9 +84,15 @@ def classify_http_failure(provider, code, body='', context=None):
         fail_reason = 'server_error'
         error = 'Provider service error'
 
-    # Add safe API message if available (already sanitized by extract_api_message)
+    # Add safe API message if available (already sanitized by extract_api_message).
+    # If the API body repeats our status label (e.g. 429 → "Rate limited" + API
+    # body "Rate limited. Please try again later."), use the API text verbatim
+    # instead of concatenating into "Rate limited: Rate limited. …".
     if api_msg:
-        error = f'{error}: {api_msg}'
+        if api_msg.lower().startswith(error.lower()):
+            error = api_msg
+        else:
+            error = f'{error}: {api_msg}'
 
     return {
         'fail_reason': fail_reason,
