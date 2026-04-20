@@ -25,6 +25,13 @@ PlasmoidItem {
     readonly property bool showCodex: Plasmoid.configuration.showCodex !== false
     readonly property bool showGemini: Plasmoid.configuration.showGemini !== false
 
+    // A provider is polled if it is shown in the popup OR selected as the panel tool.
+    // Hidden providers skip all API/script calls — avoids rate limiting and wasted work.
+    readonly property string panelTool: Plasmoid.configuration.panelTool || "claude"
+    readonly property bool claudeEnabled: showClaude || panelTool === "claude"
+    readonly property bool codexEnabled:  showCodex  || panelTool === "codex"
+    readonly property bool geminiEnabled: showGemini || panelTool === "gemini"
+
     // Path to the Python script (resolved relative to this QML file)
     readonly property string scriptPath: {
         var url = Qt.resolvedUrl("../scripts/fetch_all_usage.py").toString()
@@ -83,28 +90,31 @@ PlasmoidItem {
     }
 
     function refresh() {
-        refreshProvider("claude")
-        refreshProvider("codex")
-        refreshProvider("gemini")
+        if (claudeEnabled) refreshProvider("claude")
+        if (codexEnabled)  refreshProvider("codex")
+        if (geminiEnabled) refreshProvider("gemini")
     }
 
-    // Per-provider timers
+    // Per-provider timers — only run while the provider is enabled.
     Timer {
         id: claudeTimer
         interval: root.claudeRefreshMs
-        running: true; repeat: true
+        running: root.claudeEnabled
+        repeat: true
         onTriggered: root.refreshProvider("claude")
     }
     Timer {
         id: codexTimer
         interval: root.codexRefreshMs
-        running: true; repeat: true
+        running: root.codexEnabled
+        repeat: true
         onTriggered: root.refreshProvider("codex")
     }
     Timer {
         id: geminiTimer
         interval: root.geminiRefreshMs
-        running: true; repeat: true
+        running: root.geminiEnabled
+        repeat: true
         onTriggered: root.refreshProvider("gemini")
     }
 
@@ -112,6 +122,14 @@ PlasmoidItem {
     onCodexRefreshMsChanged:  { codexTimer.interval  = root.codexRefreshMs;  codexTimer.restart()  }
     onGeminiRefreshMsChanged: { geminiTimer.interval = root.geminiRefreshMs; geminiTimer.restart() }
 
+    // Fetch immediately when a provider is (re-)enabled, so users don't wait a full interval.
+    // The _ready gate prevents double-fetches during initial property binding, which would
+    // otherwise race with Component.onCompleted.
+    property bool _ready: false
+    onClaudeEnabledChanged: if (_ready && claudeEnabled) refreshProvider("claude")
+    onCodexEnabledChanged:  if (_ready && codexEnabled)  refreshProvider("codex")
+    onGeminiEnabledChanged: if (_ready && geminiEnabled) refreshProvider("gemini")
+
     // Initial load
-    Component.onCompleted: root.refresh()
+    Component.onCompleted: { _ready = true; root.refresh() }
 }
