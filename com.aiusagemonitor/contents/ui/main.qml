@@ -11,19 +11,31 @@ PlasmoidItem {
     property var claudeData: ({})
     property var codexData: ({})
     property var geminiData: ({})
-    property int pendingRefreshes: 0
-    readonly property bool isLoading: pendingRefreshes > 0
+    property var opencodeData: ({})
+    // isLoading derives directly from in-flight sources. A manual +1/-1 counter
+    // desyncs because the executable engine collapses identical sources: if the
+    // same provider is requested twice while in flight, only one newData fires,
+    // so the counter would stay > 0 forever and freeze isLoading (grey button).
+    readonly property bool isLoading: runner.connectedSources.length > 0
     property string lastError: ""
     property string lastUpdated: ""
 
     readonly property int claudeRefreshMs: (Plasmoid.configuration.claudeRefreshSecs || 600) * 1000
     readonly property int codexRefreshMs:  (Plasmoid.configuration.codexRefreshSecs  || 60)  * 1000
     readonly property int geminiRefreshMs: (Plasmoid.configuration.geminiRefreshSecs || 300) * 1000
+    readonly property int opencodeRefreshMs: (Plasmoid.configuration.opencodeRefreshSecs || 600) * 1000
 
     // Visibility settings
     readonly property bool showClaude: Plasmoid.configuration.showClaude !== false
     readonly property bool showCodex: Plasmoid.configuration.showCodex !== false
     readonly property bool showGemini: Plasmoid.configuration.showGemini !== false
+    readonly property bool showOpencode: Plasmoid.configuration.showOpencode !== false
+
+    // OpenCode Go dollar-value limits + subscription renewal day (anchors the monthly window)
+    readonly property int opencodeLimit5h:    Plasmoid.configuration.opencodeLimit5h    || 12
+    readonly property int opencodeLimitWeek:  Plasmoid.configuration.opencodeLimitWeek  || 30
+    readonly property int opencodeLimitMonth: Plasmoid.configuration.opencodeLimitMonth || 60
+    readonly property int opencodeBillingDay: Plasmoid.configuration.opencodeBillingDay || 1
 
     // Path to the Python script (resolved relative to this QML file)
     readonly property string scriptPath: {
@@ -53,7 +65,6 @@ PlasmoidItem {
 
         onNewData: function(sourceName, data) {
             disconnectSource(sourceName)
-            root.pendingRefreshes = Math.max(0, root.pendingRefreshes - 1)
             var stdout = (data["stdout"] || "").trim()
             var stderr = (data["stderr"] || "").trim()
             if (stdout === "") {
@@ -62,9 +73,10 @@ PlasmoidItem {
             }
             try {
                 var result = JSON.parse(stdout)
-                if (result.claude !== undefined) root.claudeData = result.claude || {}
-                if (result.codex  !== undefined) root.codexData  = result.codex  || {}
-                if (result.gemini !== undefined) root.geminiData = result.gemini || {}
+                if (result.claude   !== undefined) root.claudeData   = result.claude   || {}
+                if (result.codex    !== undefined) root.codexData    = result.codex    || {}
+                if (result.gemini   !== undefined) root.geminiData   = result.gemini   || {}
+                if (result.opencode !== undefined) root.opencodeData = result.opencode || {}
                 root.lastError = ""
                 var now = new Date()
                 root.lastUpdated = now.getHours().toString().padStart(2, "0") + ":" +
@@ -78,14 +90,19 @@ PlasmoidItem {
 
     function refreshProvider(provider) {
         if (scriptPath === "") return
-        root.pendingRefreshes += 1
-        runner.connectSource("python3 \"" + scriptPath + "\" " + provider)
+        var cmd = "python3 \"" + scriptPath + "\" " + provider
+        if (provider === "opencode")
+            cmd += " " + root.opencodeBillingDay   // pass billing-cycle reset day
+        // Skip if this exact source is still in flight (the engine would dedupe it).
+        if (runner.connectedSources.indexOf(cmd) !== -1) return
+        runner.connectSource(cmd)
     }
 
     function refresh() {
         refreshProvider("claude")
         refreshProvider("codex")
         refreshProvider("gemini")
+        refreshProvider("opencode")
     }
 
     // Per-provider timers
@@ -107,10 +124,18 @@ PlasmoidItem {
         running: true; repeat: true
         onTriggered: root.refreshProvider("gemini")
     }
+    Timer {
+        id: opencodeTimer
+        interval: root.opencodeRefreshMs
+        running: true; repeat: true
+        onTriggered: root.refreshProvider("opencode")
+    }
 
-    onClaudeRefreshMsChanged: { claudeTimer.interval = root.claudeRefreshMs; claudeTimer.restart() }
-    onCodexRefreshMsChanged:  { codexTimer.interval  = root.codexRefreshMs;  codexTimer.restart()  }
-    onGeminiRefreshMsChanged: { geminiTimer.interval = root.geminiRefreshMs; geminiTimer.restart() }
+    onClaudeRefreshMsChanged:   { claudeTimer.interval   = root.claudeRefreshMs;   claudeTimer.restart()   }
+    onCodexRefreshMsChanged:    { codexTimer.interval    = root.codexRefreshMs;    codexTimer.restart()    }
+    onGeminiRefreshMsChanged:   { geminiTimer.interval   = root.geminiRefreshMs;   geminiTimer.restart()   }
+    onOpencodeRefreshMsChanged: { opencodeTimer.interval = root.opencodeRefreshMs; opencodeTimer.restart() }
+    onOpencodeBillingDayChanged: root.refreshProvider("opencode")
 
     // Initial load
     Component.onCompleted: root.refresh()

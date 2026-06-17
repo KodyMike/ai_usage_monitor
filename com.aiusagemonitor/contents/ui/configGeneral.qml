@@ -7,6 +7,7 @@ Kirigami.FormLayout {
     property int cfg_claudeRefreshSecs: 600
     property int cfg_codexRefreshSecs: 60
     property int cfg_geminiRefreshSecs: 300
+    property int cfg_opencodeRefreshSecs: 600
     property string cfg_panelTool: "claude"
     property int cfg_panelDisplayMode: 0
 
@@ -14,6 +15,13 @@ Kirigami.FormLayout {
     property bool cfg_showClaude: true
     property bool cfg_showCodex: true
     property bool cfg_showGemini: true
+    property bool cfg_showOpencode: true
+
+    // OpenCode Go limits ($) + subscription renewal day
+    property int cfg_opencodeLimit5h: 12
+    property int cfg_opencodeLimitWeek: 30
+    property int cfg_opencodeLimitMonth: 60
+    property int cfg_opencodeBillingDay: 1
 
     // ── Refresh intervals ──────────────────────────────────────────────────
     Kirigami.Separator {
@@ -60,6 +68,19 @@ Kirigami.FormLayout {
         onActivated: cfg_geminiRefreshSecs = model[currentIndex].value
     }
 
+    QQC2.ComboBox {
+        Kirigami.FormData.label: "OpenCode:"
+        model: [
+            { text: "1 minute",   value: 60   },
+            { text: "5 minutes",  value: 300  },
+            { text: "10 minutes", value: 600  },
+            { text: "30 minutes", value: 1800 },
+        ]
+        textRole: "text"
+        currentIndex: { var v = cfg_opencodeRefreshSecs; for (var i = 0; i < model.length; i++) { if (model[i].value === v) return i } return 2 }
+        onActivated: cfg_opencodeRefreshSecs = model[currentIndex].value
+    }
+
     // ── Tool shown in panel ────────────────────────────────────────────────
     Kirigami.Separator {
         Kirigami.FormData.label: "Panel tool"
@@ -84,6 +105,11 @@ Kirigami.FormLayout {
             text: "Gemini CLI"
             checked: cfg_panelTool === "gemini"
             onToggled: if (checked) cfg_panelTool = "gemini"
+        }
+        QQC2.RadioButton {
+            text: "OpenCode"
+            checked: cfg_panelTool === "opencode"
+            onToggled: if (checked) cfg_panelTool = "opencode"
         }
     }
 
@@ -139,6 +165,45 @@ Kirigami.FormLayout {
             checked: cfg_showGemini
             onToggled: cfg_showGemini = checked
         }
+        QQC2.CheckBox {
+            text: "OpenCode"
+            checked: cfg_showOpencode
+            onToggled: cfg_showOpencode = checked
+        }
+    }
+
+    // ── OpenCode Go limits ───────────────────────────────────────────────────
+    Kirigami.Separator {
+        Kirigami.FormData.label: "OpenCode Go limits ($)"
+        Kirigami.FormData.isSection: true
+    }
+
+    QQC2.SpinBox {
+        Kirigami.FormData.label: "5-hour limit ($):"
+        from: 0; to: 100000; stepSize: 1
+        value: cfg_opencodeLimit5h
+        onValueModified: cfg_opencodeLimit5h = value
+    }
+
+    QQC2.SpinBox {
+        Kirigami.FormData.label: "Weekly limit ($):"
+        from: 0; to: 100000; stepSize: 1
+        value: cfg_opencodeLimitWeek
+        onValueModified: cfg_opencodeLimitWeek = value
+    }
+
+    QQC2.SpinBox {
+        Kirigami.FormData.label: "Monthly limit ($):"
+        from: 0; to: 100000; stepSize: 1
+        value: cfg_opencodeLimitMonth
+        onValueModified: cfg_opencodeLimitMonth = value
+    }
+
+    QQC2.SpinBox {
+        Kirigami.FormData.label: "Renewal day (monthly):"
+        from: 1; to: 31
+        value: cfg_opencodeBillingDay
+        onValueModified: cfg_opencodeBillingDay = value
     }
 
 }

@@ -8,16 +8,14 @@ import org.kde.kirigami as Kirigami
 Item {
     id: fullRoot
     implicitWidth: 360
-    implicitHeight: contentCol.implicitHeight + 24
+    // Cap the popup height; the content scrolls (Flickable) when there are many
+    // providers/accounts so nothing gets clipped.
+    implicitHeight: Math.min(contentCol.implicitHeight + 24, 600)
 
     property var cd: root.claudeData
     property var od: root.codexData
     property var gd: root.geminiData
-    property bool geminiExpanded: false
-    onGdChanged: {
-        if (!gd || !gd.buckets || gd.buckets.length <= 1)
-            geminiExpanded = false
-    }
+    property var ocd: root.opencodeData
 
     // Match GNOME extension colors exactly
     function usageColor(pct) {
@@ -80,10 +78,19 @@ Item {
         return id
     }
 
-    ColumnLayout {
-        id: contentCol
-        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-        spacing: 0
+    Flickable {
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: contentCol.implicitHeight + 24
+        clip: true
+        QQC2.ScrollBar.vertical: QQC2.ScrollBar { policy: QQC2.ScrollBar.AsNeeded }
+
+        ColumnLayout {
+            id: contentCol
+            x: 12
+            y: 12
+            width: parent.width - 24
+            spacing: 0
 
         // ── Header ─────────────────────────────────────────────────────────
         RowLayout {
@@ -255,7 +262,7 @@ Item {
             }
         }
 
-        // ── GEMINI CLI ─────────────────────────────────────────────────────
+        // ── GEMINI CLI (one card per account) ──────────────────────────────
         Loader {
             Layout.fillWidth: true
             Layout.preferredHeight: active ? implicitHeight : 0
@@ -263,61 +270,175 @@ Item {
             active: gd.installed === true && root.showGemini === true
 
             sourceComponent: ColumnLayout {
-                id: geminiCard
                 spacing: 6
-                readonly property bool canExpand: !!(gd.buckets && gd.buckets.length > 1 && !gd.error)
+
+                // One card per Google account (gd.accounts); falls back to the
+                // single legacy object when only one account is configured.
+                Repeater {
+                    model: (gd.accounts && gd.accounts.length) ? gd.accounts : [gd]
+
+                    delegate: ColumnLayout {
+                        id: geminiCard
+                        readonly property var acct: modelData
+                        property bool expanded: false
+                        readonly property bool canExpand: !!(acct.buckets && acct.buckets.length > 1 && !acct.error)
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        RowLayout {
+                            Image {
+                                source: Qt.resolvedUrl("../images/gemini_icon.png")
+                                width: 16; height: 16; fillMode: Image.PreserveAspectFit; smooth: true
+                            }
+                            PC3.Label { text: "GEMINI CLI"; font.bold: true; font.pixelSize: 12 }
+                            PC3.Label {
+                                visible: !!acct.email
+                                text: acct.email ? "· " + acct.email : ""
+                                font.pixelSize: 10
+                                color: Kirigami.Theme.disabledTextColor
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: 160
+                            }
+                            Item { Layout.fillWidth: true }
+                            QQC2.Button {
+                                visible: geminiCard.canExpand
+                                text: geminiCard.expanded
+                                    ? "Hide models"
+                                    : ("Models (" + (acct.buckets ? acct.buckets.length : 0) + ")")
+                                onClicked: geminiCard.expanded = !geminiCard.expanded
+                            }
+                        }
+
+                        // Collapsed: single overview bar (model with lowest remaining fraction)
+                        Loader {
+                            Layout.fillWidth: true
+                            active: acct.used_pct !== undefined && !acct.error && !geminiCard.expanded
+
+                            sourceComponent: UsageBar {
+                                label: acct.model ? fullRoot.prettyGeminiModel(acct.model) : "Gemini quota"
+                                pct: Math.min(acct.used_pct || 0, 100)
+                                pctText: (acct.used_pct || 0) + "%"
+                                resetText: fullRoot.formatReset(acct.reset_time)
+                                barColor: fullRoot.usageColor(acct.used_pct || 0)
+                            }
+                        }
+
+                        // Expanded: one bar per model bucket
+                        Repeater {
+                            model: (geminiCard.expanded && acct.buckets) ? acct.buckets : []
+                            delegate: UsageBar {
+                                readonly property var bkt: modelData
+                                label: fullRoot.prettyGeminiModel(bkt.model || "")
+                                pct: Math.min(bkt.used_pct || 0, 100)
+                                pctText: (bkt.used_pct || 0) + "%"
+                                resetText: fullRoot.formatReset(bkt.reset_time)
+                                barColor: fullRoot.usageColor(bkt.used_pct || 0)
+                            }
+                        }
+
+                        PC3.Label {
+                            visible: !!acct.error
+                            text: acct.error || ""
+                            font.pixelSize: 10
+                            color: Kirigami.Theme.negativeTextColor
+                            wrapMode: Text.Wrap
+                            Layout.preferredWidth: 320
+                        }
+                    }
+                }
+
+                Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: 4; Layout.bottomMargin: 4 }
+            }
+        }
+
+        // ── OPENCODE ───────────────────────────────────────────────────────
+        // OpenCode Go has no "%/reset" quota; we show accumulated spend + tokens.
+        Loader {
+            Layout.fillWidth: true
+            Layout.preferredHeight: active ? implicitHeight : 0
+            visible: active
+            active: ocd.installed === true && root.showOpencode === true
+
+            sourceComponent: ColumnLayout {
+                id: opencodeCard
+                spacing: 6
 
                 RowLayout {
-                    id: geminiHeaderRow
-                    Image {
-                        source: Qt.resolvedUrl("../images/gemini_icon.png")
-                        width: 16; height: 16; fillMode: Image.PreserveAspectFit; smooth: true
+                    Rectangle { width: 14; height: 14; radius: 3; color: "#8b5cf6" }
+                    PC3.Label { text: "OPENCODE"; font.bold: true; font.pixelSize: 12 }
+                    PC3.Label {
+                        text: "Go · est. this machine"
+                        font.pixelSize: 10
+                        color: Kirigami.Theme.disabledTextColor
                     }
-                    PC3.Label { text: "GEMINI CLI"; font.bold: true; font.pixelSize: 12 }
                     Item { Layout.fillWidth: true }
-                    QQC2.Button {
-                        visible: geminiCard.canExpand
-                        text: fullRoot.geminiExpanded
-                            ? "Hide models"
-                            : ("Models (" + (gd.buckets ? gd.buckets.length : 0) + ")")
-                        onClicked: fullRoot.geminiExpanded = !fullRoot.geminiExpanded
-                    }
-                }
-
-                // Collapsed: single overview bar (model with lowest remaining fraction)
-                Loader {
-                    Layout.fillWidth: true
-                    active: gd.used_pct !== undefined && !gd.error && !fullRoot.geminiExpanded
-
-                    sourceComponent: UsageBar {
-                        label: gd.model ? fullRoot.prettyGeminiModel(gd.model) : "Gemini quota"
-                        pct: Math.min(gd.used_pct || 0, 100)
-                        pctText: (gd.used_pct || 0) + "%"
-                        resetText: fullRoot.formatReset(gd.reset_time)
-                        barColor: fullRoot.usageColor(gd.used_pct || 0)
-                    }
-                }
-
-                // Expanded: one bar per model bucket
-                Repeater {
-                    model: (fullRoot.geminiExpanded && gd.buckets) ? gd.buckets : []
-                    delegate: UsageBar {
-                        readonly property var bkt: modelData
-                        label: fullRoot.prettyGeminiModel(bkt.model || "")
-                        pct: Math.min(bkt.used_pct || 0, 100)
-                        pctText: (bkt.used_pct || 0) + "%"
-                        resetText: fullRoot.formatReset(bkt.reset_time)
-                        barColor: fullRoot.usageColor(bkt.used_pct || 0)
+                    PC3.Label {
+                        visible: ocd.sessions !== undefined && !ocd.error
+                        text: ocd.sessions !== undefined ? (ocd.sessions + " sessions") : ""
+                        font.pixelSize: 10
+                        color: Kirigami.Theme.disabledTextColor
                     }
                 }
 
                 PC3.Label {
-                    visible: !!gd.error
-                    text: gd.error || ""
+                    visible: !!ocd.error
+                    text: ocd.error || ""
                     font.pixelSize: 10
                     color: Kirigami.Theme.negativeTextColor
                     wrapMode: Text.Wrap
-                    width: 320
+                    Layout.preferredWidth: 320
+                }
+
+                // OpenCode Go dollar-value limit windows ($12 / $30 / $60). Spend is a
+                // local estimate (tokens × model price), so it may differ from opencode's
+                // console; 5h/weekly resets are approximate (rolling windows).
+                Repeater {
+                    model: (!ocd.error && ocd.five_hour !== undefined) ? [
+                        { win: ocd.five_hour, lim: root.opencodeLimit5h,    lbl: "5h" },
+                        { win: ocd.weekly,    lim: root.opencodeLimitWeek,  lbl: "7d" },
+                        { win: ocd.monthly,   lim: root.opencodeLimitMonth, lbl: "mo" }
+                    ] : []
+                    delegate: UsageBar {
+                        readonly property real p: modelData.lim > 0 ? Math.min((modelData.win.used / modelData.lim) * 100, 100) : 0
+                        label: modelData.lbl
+                        pct: p
+                        pctText: "$" + modelData.win.used.toFixed(2) + " / $" + modelData.lim
+                        resetText: fullRoot.formatReset(modelData.win.reset)
+                        barColor: fullRoot.usageColor(p)
+                    }
+                }
+
+                GridLayout {
+                    visible: ocd.cost_total !== undefined && !ocd.error
+                    columns: 2
+                    rowSpacing: 2
+                    columnSpacing: 12
+                    Layout.fillWidth: true
+
+                    PC3.Label { text: "Total spent"; font.pixelSize: 11; color: Kirigami.Theme.disabledTextColor }
+                    PC3.Label {
+                        text: ocd.cost_total !== undefined ? ("$" + ocd.cost_total.toFixed(2)) : "—"
+                        font.pixelSize: 11; font.bold: true
+                        Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                    }
+
+                    PC3.Label { text: "Tokens in / out"; font.pixelSize: 11; color: Kirigami.Theme.disabledTextColor }
+                    PC3.Label {
+                        text: fullRoot.formatTokens(ocd.tokens_input) + " / " + fullRoot.formatTokens(ocd.tokens_output)
+                        font.pixelSize: 11; font.bold: true
+                        Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                    }
+                }
+
+                // OpenCode Go has no usage API: this is a local estimate of THIS machine
+                // only (undercounts if you use OpenCode elsewhere). Real global total: opencode.ai.
+                PC3.Label {
+                    visible: ocd.cost_total !== undefined && !ocd.error
+                    text: "Estimate · this machine only — real total at opencode.ai"
+                    font.pixelSize: 9
+                    color: Kirigami.Theme.disabledTextColor
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
                     Layout.preferredWidth: 320
                 }
 
@@ -333,12 +454,13 @@ Item {
             readonly property bool claudeVisible: cd.installed === true && root.showClaude === true
             readonly property bool codexVisible: od.installed === true && root.showCodex === true
             readonly property bool geminiVisible: gd.installed === true && root.showGemini === true
-            active: !claudeVisible && !codexVisible && !geminiVisible
+            readonly property bool opencodeVisible: ocd.installed === true && root.showOpencode === true
+            active: !claudeVisible && !codexVisible && !geminiVisible && !opencodeVisible
 
             sourceComponent: PC3.Label {
                 text: {
                     if (root.isLoading) return "Loading…"
-                    var allHidden = (cd.installed === true || od.installed === true || gd.installed === true)
+                    var allHidden = (cd.installed === true || od.installed === true || gd.installed === true || ocd.installed === true)
                     return allHidden ? "All tools hidden in settings" : "No AI tools detected"
                 }
                 color: Kirigami.Theme.disabledTextColor
@@ -348,6 +470,7 @@ Item {
         }
 
         Item { height: 4 }
+        }
     }
 
     // ── Reusable usage bar component ────────────────────────────────────────
