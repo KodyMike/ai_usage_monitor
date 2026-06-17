@@ -40,5 +40,38 @@
         <entry name="showGemini" type="Bool">
             <default>true</default>
         </entry>
+        <entry name="opencodeRefreshSecs" type="Int">
+            <label>OpenCode refresh interval (seconds)</label>
+            <default>600</default>
+            <min>60</min>
+            <max>3600</max>
+        </entry>
+        <entry name="showOpencode" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="opencodeLimit5h" type="Int">
+            <label>OpenCode Go 5-hour limit in USD</label>
+            <default>12</default>
+            <min>0</min>
+            <max>100000</max>
+        </entry>
+        <entry name="opencodeLimitWeek" type="Int">
+            <label>OpenCode Go weekly limit in USD</label>
+            <default>30</default>
+            <min>0</min>
+            <max>100000</max>
+        </entry>
+        <entry name="opencodeLimitMonth" type="Int">
+            <label>OpenCode Go monthly limit in USD</label>
+            <default>60</default>
+            <min>0</min>
+            <max>100000</max>
+        </entry>
+        <entry name="opencodeBillingDay" type="Int">
+            <label>OpenCode subscription renewal day (1-31; anchors the monthly window)</label>
+            <default>1</default>
+            <min>1</min>
+            <max>31</max>
+        </entry>
     </group>
 </kcfg>

@@ -10,23 +10,33 @@ Item {
     property var cd: root.claudeData
     property var od: root.codexData
     property var gd: root.geminiData
+    property var ocd: root.opencodeData
 
     property string panelTool: Plasmoid.configuration.panelTool || "claude"
     property int displayMode: Plasmoid.configuration.panelDisplayMode || 0
 
+    // OpenCode Go shows the 5h window (the tightest immediate limit) in the panel.
+    readonly property bool panelIsOpencode: panelTool === "opencode"
+    readonly property real opencodeFivePct: (ocd.five_hour && root.opencodeLimit5h > 0)
+        ? Math.min((ocd.five_hour.used / root.opencodeLimit5h) * 100, 100) : 0
+
     property var activeData: {
-        if (panelTool === "codex")  return od
-        if (panelTool === "gemini") return gd
+        if (panelTool === "codex")    return od
+        if (panelTool === "gemini")   return gd
+        if (panelTool === "opencode") return ocd
         return cd
     }
 
     property real activePct: {
         if (panelTool === "gemini") return Math.min((gd.used_pct || 0), 100)
+        if (panelIsOpencode) return opencodeFivePct
         return Math.min((activeData.five_hour_pct || 0), 100)
     }
 
     property string activeText: {
         if (root.isLoading) return "…"
+        if (panelIsOpencode)
+            return (ocd.five_hour && ocd.five_hour.used !== undefined) ? (Math.round(opencodeFivePct) + "%") : "—"
         if (panelTool === "gemini")
             return (gd.used_pct !== undefined) ? (gd.used_pct + "%") : "—"
         return activeData.five_hour_pct !== undefined ? activeData.five_hour_pct + "%" : "—"
@@ -35,6 +45,7 @@ Item {
     property string iconSource: {
         if (panelTool === "codex")  return Qt.resolvedUrl("../images/codex_icon.png")
         if (panelTool === "gemini") return Qt.resolvedUrl("../images/gemini_icon.png")
+        if (panelIsOpencode) return ""
         return Qt.resolvedUrl("../images/claude-icon-22.png")
     }
 
@@ -64,7 +75,7 @@ Item {
             width: 16; height: 16
             fillMode: Image.PreserveAspectFit
             smooth: true
-            visible: activeData.installed === true
+            visible: activeData.installed === true && compactRoot.iconSource !== ""
         }
 
         // ── Ring (modes 0 and 1) ─────────────────────────────────────────
