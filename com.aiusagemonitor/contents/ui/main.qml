@@ -11,8 +11,27 @@ PlasmoidItem {
     property var claudeData: ({})
     property var codexData: ({})
     property var geminiData: ({})
-    property int pendingRefreshes: 0
-    readonly property bool isLoading: pendingRefreshes > 0
+    // Per-provider fetch start time (epoch ms), 0 when idle.
+    //
+    // This was a single counter, incremented per start and decremented per
+    // result. Any fetch that started but never delivered a result left it
+    // permanently above zero, so isLoading stayed true forever — which
+    // disabled the refresh button and kept the panel showing "…" instead of a
+    // percentage. Tracking per provider makes each fetch's state recoverable
+    // and lets a duplicate start be a no-op rather than an unbalanced count.
+    property var fetchStarted: ({ "claude": 0, "codex": 0, "gemini": 0 })
+    readonly property bool isLoading: fetchStarted.claude > 0
+        || fetchStarted.codex > 0
+        || fetchStarted.gemini > 0
+
+    // Backstop: a script that never reports back must not disable the UI.
+    readonly property int fetchTimeoutMs: 60000
+
+    // Nothing may be fetched until the component is complete. Property change
+    // handlers run during initial binding evaluation, when the DataSource
+    // below is not ready yet, and a connectSource() made that early is
+    // silently dropped — no result ever arrives for it.
+    property bool started: false
     property string lastError: ""
     property string lastUpdated: ""
 
@@ -70,7 +89,8 @@ PlasmoidItem {
 
         onNewData: function(sourceName, data) {
             disconnectSource(sourceName)
-            root.pendingRefreshes = Math.max(0, root.pendingRefreshes - 1)
+            var finished = root.providerFromSource(sourceName)
+            if (finished !== "") root.setFetchStarted(finished, 0)
             var stdout = (data["stdout"] || "").trim()
             var stderr = (data["stderr"] || "").trim()
             if (stdout === "") {
@@ -103,9 +123,30 @@ PlasmoidItem {
     }
 
     function refreshProvider(provider) {
-        if (scriptPath === "") return
-        root.pendingRefreshes += 1
+        if (!started || scriptPath === "") return
+        // Already running: connecting the same source again would be ignored
+        // anyway, and would leave this provider marked in-flight twice.
+        if (fetchStarted[provider] > 0) return
+        setFetchStarted(provider, Date.now())
         runner.connectSource("python3 \"" + scriptPath + "\" " + provider)
+    }
+
+    function providerFromSource(sourceName) {
+        var parts = (sourceName || "").trim().split(" ")
+        var last = parts[parts.length - 1]
+        return (last === "claude" || last === "codex" || last === "gemini") ? last : ""
+    }
+
+    function setFetchStarted(provider, ms) {
+        if (fetchStarted[provider] === ms) return
+        // Replace the object rather than mutating it, so bindings re-evaluate.
+        var next = {
+            "claude": fetchStarted.claude,
+            "codex": fetchStarted.codex,
+            "gemini": fetchStarted.gemini
+        }
+        next[provider] = ms
+        fetchStarted = next
     }
 
     function refresh() {
@@ -166,16 +207,36 @@ PlasmoidItem {
         onTriggered: root.refreshProvider("gemini")
     }
 
+    // Clear a fetch that never reported back, so an unresponsive script cannot
+    // leave the refresh button disabled and the panel stuck on "…".
+    Timer {
+        interval: 10000
+        running: true; repeat: true
+        onTriggered: {
+            var now = Date.now()
+            var providers = ["claude", "codex", "gemini"]
+            for (var i = 0; i < providers.length; i++) {
+                var p = providers[i]
+                if (root.fetchStarted[p] > 0 && now - root.fetchStarted[p] > root.fetchTimeoutMs)
+                    root.setFetchStarted(p, 0)
+            }
+        }
+    }
+
     onClaudeRefreshMsChanged: claudeTimer.restart()
     onCodexRefreshMsChanged:  codexTimer.restart()
     onGeminiRefreshMsChanged: geminiTimer.restart()
 
     // Fetch immediately when a provider is switched back on, instead of
-    // leaving it blank until the next tick.
+    // leaving it blank until the next tick. refreshProvider() ignores these
+    // until the component is complete.
     onClaudePolledChanged: if (claudePolled) refreshProvider("claude")
     onCodexPolledChanged:  if (codexPolled)  refreshProvider("codex")
     onGeminiPolledChanged: if (geminiPolled) refreshProvider("gemini")
 
     // Initial load
-    Component.onCompleted: root.refresh()
+    Component.onCompleted: {
+        root.started = true
+        root.refresh()
+    }
 }
