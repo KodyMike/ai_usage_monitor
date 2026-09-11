@@ -10,6 +10,6 @@
     "49"
   ],
   "url": "https://github.com/KodyMike/ai_usage_monitor/tree/main/gnome-extension/aiusagemonitor@aimonitor",
-  "version": 2,
+  "version": 3,
   "settings-schema": "org.gnome.shell.extensions.aiusagemonitor"
 }
