@@ -14,6 +14,19 @@ Item {
     property var od: root.codexData
     property var gd: root.geminiData
     property bool geminiExpanded: false
+
+    // Secondary label colour. Derived from the scheme's real text colour rather
+    // than disabledTextColor: that role means "this control is disabled" and
+    // some schemes (e.g. Edna) set it close to the background, which made these
+    // always-active labels unreadable. Blending toward the background keeps the
+    // muted look while contrast scales with whatever the scheme actually uses.
+    readonly property color secondaryTextColor: Kirigami.ColorUtils.linearInterpolation(
+        Kirigami.Theme.textColor, Kirigami.Theme.backgroundColor, 0.35)
+
+    // The empty part of a usage bar had the same problem: on schemes where the
+    // popup background differs from backgroundColor the track vanished.
+    readonly property color barTrackColor: Kirigami.ColorUtils.linearInterpolation(
+        Kirigami.Theme.backgroundColor, Kirigami.Theme.textColor, 0.18)
     onGdChanged: {
         if (!gd || !gd.buckets || gd.buckets.length <= 1)
             geminiExpanded = false
@@ -170,7 +183,7 @@ Item {
                     visible: !cd.error && (cd.seven_day_pct === null || cd.seven_day_pct === undefined)
                     text: "7-day limit: not tracked on this plan"
                     font.pixelSize: 10
-                    color: Kirigami.Theme.disabledTextColor
+                    color: fullRoot.secondaryTextColor
                 }
 
                 Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: 4; Layout.bottomMargin: 4 }
@@ -207,14 +220,14 @@ Item {
                         visible: !!od.model
                         text: od.model ? "· " + fullRoot.prettyCodexModel(od.model) : ""
                         font.pixelSize: 10
-                        color: Kirigami.Theme.disabledTextColor
+                        color: fullRoot.secondaryTextColor
                     }
                     Item { Layout.fillWidth: true }
                     PC3.Label {
                         visible: !!od.plan_type
                         text: od.plan_type || ""
                         font.pixelSize: 10
-                        color: Kirigami.Theme.disabledTextColor
+                        color: fullRoot.secondaryTextColor
                     }
                 }
 
@@ -248,7 +261,7 @@ Item {
                     visible: od.has_data === false
                     text: "No session data yet"
                     font.pixelSize: 10
-                    color: Kirigami.Theme.disabledTextColor
+                    color: fullRoot.secondaryTextColor
                 }
 
                 Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: 4; Layout.bottomMargin: 4 }
@@ -341,7 +354,7 @@ Item {
                     var allHidden = (cd.installed === true || od.installed === true || gd.installed === true)
                     return allHidden ? "All tools hidden in settings" : "No AI tools detected"
                 }
-                color: Kirigami.Theme.disabledTextColor
+                color: fullRoot.secondaryTextColor
                 horizontalAlignment: Text.AlignHCenter
                 Layout.fillWidth: true
             }
@@ -364,7 +377,7 @@ Item {
         PC3.Label {
             text: label
             font.pixelSize: 10
-            color: Kirigami.Theme.disabledTextColor
+            color: fullRoot.secondaryTextColor
             Layout.minimumWidth: 18
         }
 
@@ -372,7 +385,7 @@ Item {
             Layout.fillWidth: true
             height: 8
             radius: 4
-            color: Kirigami.Theme.backgroundColor
+            color: fullRoot.barTrackColor
 
             Rectangle {
                 width: parent.width * (pct / 100)
@@ -396,7 +409,7 @@ Item {
         PC3.Label {
             text: resetText
             font.pixelSize: 10
-            color: Kirigami.Theme.disabledTextColor
+            color: fullRoot.secondaryTextColor
             Layout.minimumWidth: 70
         }
     }

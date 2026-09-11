@@ -11,6 +11,11 @@ Item {
     property var od: root.codexData
     property var gd: root.geminiData
 
+    // See FullRepresentation: disabledTextColor is unreadable on some schemes,
+    // so secondary text is derived from the scheme's own text colour instead.
+    readonly property color secondaryTextColor: Kirigami.ColorUtils.linearInterpolation(
+        Kirigami.Theme.textColor, Kirigami.Theme.backgroundColor, 0.35)
+
     property string panelTool: Plasmoid.configuration.panelTool || "claude"
     property int displayMode: Plasmoid.configuration.panelDisplayMode || 0
 
@@ -134,7 +139,7 @@ Item {
             visible: root.isLoading && activeData.installed !== true
             text: "…"
             font.pixelSize: 11
-            color: Kirigami.Theme.disabledTextColor
+            color: compactRoot.secondaryTextColor
         }
 
         // Error fallback — script failed, show ! instead of blank
