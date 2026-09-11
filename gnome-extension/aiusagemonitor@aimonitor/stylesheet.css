@@ -30,3 +30,8 @@
 .ai-usage-panel-ring {
     margin: 0 2px;
 }
+
+.ai-usage-stale {
+    color: #94a3b8;
+    font-size: 10px;
+}

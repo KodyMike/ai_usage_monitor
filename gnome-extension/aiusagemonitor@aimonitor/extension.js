@@ -13,6 +13,11 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 const PANEL_RING_SIZE = 16;
 const PANEL_RING_STROKE = 2.2;
 const POPUP_BAR_WIDTH = 150;
+const PROVIDERS = ['claude', 'codex', 'gemini'];
+const MAX_BACKOFF_SECS = 30 * 60;
+const TRANSIENT_FAILURES = [
+    'rate_limited', 'timeout', 'network_error', 'server_error', 'http_error',
+];
 
 function menuItemActor(item) {
     return item.actor ?? item;
@@ -32,6 +37,9 @@ class AIUsageIndicator extends PanelMenu.Button {
         this._claudeCancellable = null;
         this._codexCancellable = null;
         this._geminiCancellable = null;
+        // Extra delay, in seconds, added on top of the configured interval
+        // while a provider keeps failing transiently (usually a rate limit).
+        this._backoff = {claude: 0, codex: 0, gemini: 0};
         this._claudeData = {};
         this._codexData = {};
         this._geminiData = {};
@@ -79,12 +87,59 @@ class AIUsageIndicator extends PanelMenu.Button {
 
         this._settingsChangedId = this._settings.connect('changed', this._onSettingsChanged.bind(this));
 
-        this._refreshProvider('claude');
-        this._refreshProvider('codex');
-        this._refreshProvider('gemini');
-        this._scheduleRefresh('claude');
-        this._scheduleRefresh('codex');
-        this._scheduleRefresh('gemini');
+        for (const provider of PROVIDERS) {
+            if (this._providerPolled(provider))
+                this._refreshProvider(provider);
+            this._scheduleRefresh(provider);
+        }
+    }
+
+    // A provider is polled only if it is shown in the menu or drives the panel
+    // icon. Hidden providers used to keep making API calls nobody could see,
+    // spending the same rate limit as the visible ones.
+    _providerPolled(provider) {
+        return this._settings.get_boolean(`show-${provider}`)
+            || this._settings.get_string('panel-tool') === provider;
+    }
+
+    // Cached data served during a provider failure is still worth showing.
+    _dataUsable(data) {
+        return !!data && (!data.error || data.stale === true);
+    }
+
+    _formatAge(secs) {
+        const s = Number(secs || 0);
+        if (s < 60) return 'less than a minute';
+        if (s < 3600) return `${Math.floor(s / 60)}m`;
+        return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+    }
+
+    _errorText(data) {
+        if (!data?.error) return '';
+        let text = data.error + (data.retry_count ? ` (${data.retry_count} attempts)` : '');
+        if (data.stale === true)
+            text += ` · showing data from ${this._formatAge(data.age_secs)} ago`;
+        return text;
+    }
+
+    // Grow the poll interval while a provider keeps failing transiently,
+    // honouring Retry-After when it sent one. Returns true if it changed.
+    _applyBackoff(provider, data) {
+        const previous = this._backoff[provider];
+        const transient = TRANSIENT_FAILURES.includes(data?.fail_reason);
+
+        let next;
+        if (!transient) {
+            next = 0;
+        } else if (data.retry_after_secs !== undefined && data.retry_after_secs !== null) {
+            next = Number(data.retry_after_secs);
+        } else {
+            const base = this._settings.get_int(`${provider}-refresh-interval`);
+            next = previous > 0 ? previous * 2 : base * 2;
+        }
+
+        this._backoff[provider] = Math.min(next, MAX_BACKOFF_SECS);
+        return this._backoff[provider] !== previous;
     }
 
     _buildMenu() {
@@ -128,7 +183,7 @@ class AIUsageIndicator extends PanelMenu.Button {
 
         if (this._isLoading)
             this._panelLabel.text = '...';
-        else if (data.error)
+        else if (!this._dataUsable(data))
             this._panelLabel.text = '!';
         else
             this._panelLabel.text = `${Math.round(pct)}%`;
@@ -175,7 +230,7 @@ class AIUsageIndicator extends PanelMenu.Button {
     }
 
     _toolUsable(tool, data) {
-        if (!data?.installed || data.error)
+        if (!data?.installed || !this._dataUsable(data))
             return false;
         if (tool === 'codex' && data.has_data === false)
             return false;
@@ -307,8 +362,8 @@ class AIUsageIndicator extends PanelMenu.Button {
 
         if (data.error) {
             let errorLabel = new St.Label({
-                text: data.error + (data.retry_count ? ` (${data.retry_count} attempts)` : ''),
-                style_class: 'ai-usage-error',
+                text: this._errorText(data),
+                style_class: data.stale === true ? 'ai-usage-stale' : 'ai-usage-error',
             });
             errorLabel.clutter_text.line_wrap = true;
             errorLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
@@ -322,13 +377,13 @@ class AIUsageIndicator extends PanelMenu.Button {
                     text: 'Gemini CLI not detected',
                     style: 'color: #64748b; font-size: 10px; margin-bottom: 4px;',
                 }));
-            } else if (data.used_pct !== undefined && !data.error) {
+            } else if (data.used_pct !== undefined && this._dataUsable(data)) {
                 section.add_child(this._createUsageBar(data.model || 'Gemini quota', data.used_pct, data.reset_time));
             }
         } else {
-            if (data.five_hour_pct !== undefined && !data.error)
+            if (data.five_hour_pct !== undefined && this._dataUsable(data))
                 section.add_child(this._createUsageBar('5h', data.five_hour_pct, data.five_hour_reset));
-            if (data.seven_day_pct !== undefined && data.seven_day_pct !== null && !data.error)
+            if (data.seven_day_pct !== undefined && data.seven_day_pct !== null && this._dataUsable(data))
                 section.add_child(this._createUsageBar('7d', data.seven_day_pct, data.seven_day_reset));
         }
 
@@ -467,6 +522,9 @@ class AIUsageIndicator extends PanelMenu.Button {
                     if (parsed.claude !== undefined) this._claudeData = parsed.claude || {};
                     if (parsed.codex  !== undefined) this._codexData  = parsed.codex  || {};
                     if (parsed.gemini !== undefined) this._geminiData = parsed.gemini || {};
+                    if (parsed[provider] !== undefined
+                        && this._applyBackoff(provider, parsed[provider]))
+                        this._scheduleRefresh(provider);
                 }
             } catch (e) {
                 if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
@@ -480,17 +538,26 @@ class AIUsageIndicator extends PanelMenu.Button {
     }
 
     _refresh() {
-        this._refreshProvider('claude');
-        this._refreshProvider('codex');
-        this._refreshProvider('gemini');
+        for (const provider of PROVIDERS) {
+            if (this._providerPolled(provider))
+                this._refreshProvider(provider);
+        }
     }
 
     _scheduleRefresh(provider) {
         let timeoutKey = `_${provider}TimeoutId`;
-        if (this[timeoutKey])
+        if (this[timeoutKey]) {
             GLib.source_remove(this[timeoutKey]);
+            this[timeoutKey] = null;
+        }
 
-        let interval = this._settings.get_int(`${provider}-refresh-interval`);
+        if (!this._providerPolled(provider))
+            return;
+
+        let interval = Math.max(
+            this._settings.get_int(`${provider}-refresh-interval`),
+            this._backoff[provider]);
+
         this[timeoutKey] = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, interval, () => {
             this._refreshProvider(provider);
             return GLib.SOURCE_CONTINUE;
@@ -501,6 +568,15 @@ class AIUsageIndicator extends PanelMenu.Button {
         if (key === 'claude-refresh-interval') this._scheduleRefresh('claude');
         else if (key === 'codex-refresh-interval') this._scheduleRefresh('codex');
         else if (key === 'gemini-refresh-interval') this._scheduleRefresh('gemini');
+        else if (key.startsWith('show-') || key === 'panel-tool') {
+            // A provider switched back on needs data now, not at the next tick.
+            for (const provider of PROVIDERS) {
+                const wasArmed = this[`_${provider}TimeoutId`] !== null;
+                this._scheduleRefresh(provider);
+                if (!wasArmed && this._providerPolled(provider))
+                    this._refreshProvider(provider);
+            }
+        }
         this._updatePanelIcon();
         this._updateContent();
     }

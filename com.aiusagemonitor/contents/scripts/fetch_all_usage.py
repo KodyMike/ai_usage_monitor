@@ -13,9 +13,22 @@ import urllib.error
 import urllib.parse
 import socket
 import sys
+import os
+import time
+import email.utils
 
 result = {}
 today = datetime.now(timezone.utc).date()
+
+# Last-good data is cached per provider so a transient failure (most often an
+# API rate limit) does not blank the widget. Anything older than this is
+# dropped instead of shown, since a stale 5h window tells the user nothing.
+CACHE_DIR = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'ai-usage-monitor'
+STALE_MAX_SECS = 6 * 3600
+
+# Failures worth falling back to cache for. Auth problems are excluded: they
+# persist until the user re-authenticates, so stale bars would hide the fix.
+TRANSIENT_FAILURES = {'rate_limited', 'timeout', 'network_error', 'server_error', 'http_error'}
 
 # Optional provider filter: python3 fetch_all_usage.py [claude|codex|gemini]
 _only = sys.argv[1] if len(sys.argv) > 1 else None
@@ -58,7 +71,27 @@ def extract_api_message(body):
     return body.strip().splitlines()[0][:180]
 
 
-def classify_http_failure(provider, code, body='', context=None):
+def parse_retry_after(headers):
+    """Seconds to wait from a Retry-After header (delta-seconds or HTTP-date), or None."""
+    if not headers:
+        return None
+    raw = (headers.get('Retry-After') or '').strip()
+    if not raw:
+        return None
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(raw)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0, int((when - datetime.now(timezone.utc)).total_seconds()))
+    except Exception:
+        return None
+
+
+def classify_http_failure(provider, code, body='', context=None, headers=None):
     """
     Normalize HTTP failures into user-facing messages.
     SECURITY: Never exposes full error bodies that might contain sensitive data.
@@ -88,11 +121,18 @@ def classify_http_failure(provider, code, body='', context=None):
     if api_msg:
         error = f'{error}: {api_msg}'
 
-    return {
+    out = {
         'fail_reason': fail_reason,
         'http_code': code,
         'error': error,
     }
+
+    # Let the widget back off for exactly as long as the provider asks.
+    retry_after = parse_retry_after(headers)
+    if retry_after is not None:
+        out['retry_after_secs'] = retry_after
+
+    return out
 
 
 def classify_exception_failure(err):
@@ -107,6 +147,69 @@ def classify_exception_failure(err):
     if isinstance(err, KeyError):
         return {'fail_reason': 'invalid_credentials', 'error': f'Missing credential field: {err}'}
     return {'fail_reason': 'unknown_error', 'error': str(err)}
+
+
+def cache_file(provider):
+    return CACHE_DIR / f'{provider}.json'
+
+
+def read_cache(provider):
+    """Return the cached envelope for a provider, or None. Best-effort."""
+    try:
+        return json.loads(cache_file(provider).read_text())
+    except Exception:
+        return None
+
+
+def write_cache(provider, data):
+    """Persist a successful fetch. Best-effort: a cache failure must not break output."""
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        target = cache_file(provider)
+        tmp = target.with_suffix('.tmp')
+        tmp.write_text(json.dumps({'fetched_at': int(time.time()), 'data': data}))
+        tmp.replace(target)
+    except Exception:
+        pass
+
+
+def apply_cache(provider, data):
+    """
+    Keep the widget useful across transient provider failures.
+
+    On success: persist the payload as this provider's last-good data.
+    On a transient failure with usable cache: return the cached numbers plus
+    the error fields, flagged `stale` with an `age_secs` the UI can render, so
+    the bars stay up instead of being replaced by a red error.
+    """
+    if data.get('installed') is not True:
+        return data
+
+    reason = data.get('fail_reason')
+    if not reason:
+        write_cache(provider, data)
+        return data
+
+    if reason not in TRANSIENT_FAILURES:
+        return data
+
+    cached = read_cache(provider) or {}
+    payload = cached.get('data')
+    if not isinstance(payload, dict):
+        return data
+
+    try:
+        age = int(time.time() - int(cached.get('fetched_at', 0)))
+    except (TypeError, ValueError):
+        return data
+    if age < 0 or age > STALE_MAX_SECS:
+        return data
+
+    merged = dict(payload)
+    merged.update(data)          # error fields always win over cached ones
+    merged['stale'] = True
+    merged['age_secs'] = age
+    return merged
 
 
 def refresh_gemini_token(creds_path, creds):
@@ -198,7 +301,7 @@ if not _only or _only == 'claude':
         except urllib.error.HTTPError as e:
             result['claude'] = {
                 'installed': True,
-                **classify_http_failure('claude', e.code, read_http_error_body(e)),
+                **classify_http_failure('claude', e.code, read_http_error_body(e), headers=e.headers),
             }
         except Exception as e:
             result['claude'] = {'installed': True, **classify_exception_failure(e)}
@@ -347,7 +450,7 @@ if not _only or _only == 'gemini':
                             break
                         continue
                 else:
-                    last_error = classify_http_failure('gemini', e.code, body, context={'creds': creds})
+                    last_error = classify_http_failure('gemini', e.code, body, context={'creds': creds}, headers=e.headers)
                     break
 
             except Exception as e:
@@ -373,5 +476,11 @@ if not _only or _only == 'gemini':
     else:
         result['gemini'] = {'installed': False}
 
+
+# Codex is read from local session files, so only the network-backed providers
+# need a cache fallback.
+for _provider in ('claude', 'gemini'):
+    if _provider in result:
+        result[_provider] = apply_cache(_provider, result[_provider])
 
 print(json.dumps(result))

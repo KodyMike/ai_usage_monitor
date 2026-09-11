@@ -40,6 +40,31 @@ Item {
         return "#22c55e"
     }
 
+    // Cached data served during a provider failure is still worth showing, so
+    // bars stay visible and the error is demoted to a note.
+    function dataUsable(d) {
+        return !!d && (!d.error || d.stale === true)
+    }
+
+    function formatAge(secs) {
+        var s = Number(secs || 0)
+        if (s < 60) return "less than a minute"
+        if (s < 3600) return Math.floor(s / 60) + "m"
+        return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"
+    }
+
+    function errorText(d) {
+        if (!d || !d.error) return ""
+        if (d.stale !== true) return d.error
+        return d.error + " · showing data from " + formatAge(d.age_secs) + " ago"
+    }
+
+    function errorColor(d) {
+        return (d && d.stale === true)
+            ? fullRoot.secondaryTextColor
+            : Kirigami.Theme.negativeTextColor
+    }
+
     function formatReset(isoStr) {
         if (!isoStr) return ""
         var now = new Date()
@@ -143,8 +168,8 @@ Item {
                 // Error message (separate row)
                 PC3.Label {
                     visible: !!cd.error
-                    text: cd.error || ""
-                    color: Kirigami.Theme.negativeTextColor
+                    text: fullRoot.errorText(cd)
+                    color: fullRoot.errorColor(cd)
                     font.pixelSize: 10
                     wrapMode: Text.Wrap
                     width: 320
@@ -154,7 +179,7 @@ Item {
                 // 5h bar
                 Loader {
                     Layout.fillWidth: true
-                    active: cd.five_hour_pct !== undefined && !cd.error
+                    active: cd.five_hour_pct !== undefined && fullRoot.dataUsable(cd)
 
                     sourceComponent: UsageBar {
                         label: "5h"
@@ -168,7 +193,7 @@ Item {
                 // 7d bar (only if data available)
                 Loader {
                     Layout.fillWidth: true
-                    active: cd.seven_day_pct !== null && cd.seven_day_pct !== undefined && !cd.error
+                    active: cd.seven_day_pct !== null && cd.seven_day_pct !== undefined && fullRoot.dataUsable(cd)
 
                     sourceComponent: UsageBar {
                         label: "7d"
@@ -180,7 +205,7 @@ Item {
                 }
 
                 PC3.Label {
-                    visible: !cd.error && (cd.seven_day_pct === null || cd.seven_day_pct === undefined)
+                    visible: fullRoot.dataUsable(cd) && (cd.seven_day_pct === null || cd.seven_day_pct === undefined)
                     text: "7-day limit: not tracked on this plan"
                     font.pixelSize: 10
                     color: fullRoot.secondaryTextColor
@@ -278,7 +303,7 @@ Item {
             sourceComponent: ColumnLayout {
                 id: geminiCard
                 spacing: 6
-                readonly property bool canExpand: !!(gd.buckets && gd.buckets.length > 1 && !gd.error)
+                readonly property bool canExpand: !!(gd.buckets && gd.buckets.length > 1 && fullRoot.dataUsable(gd))
 
                 RowLayout {
                     id: geminiHeaderRow
@@ -300,7 +325,7 @@ Item {
                 // Collapsed: single overview bar (model with lowest remaining fraction)
                 Loader {
                     Layout.fillWidth: true
-                    active: gd.used_pct !== undefined && !gd.error && !fullRoot.geminiExpanded
+                    active: gd.used_pct !== undefined && fullRoot.dataUsable(gd) && !fullRoot.geminiExpanded
 
                     sourceComponent: UsageBar {
                         label: gd.model ? fullRoot.prettyGeminiModel(gd.model) : "Gemini quota"
@@ -326,9 +351,9 @@ Item {
 
                 PC3.Label {
                     visible: !!gd.error
-                    text: gd.error || ""
+                    text: fullRoot.errorText(gd)
                     font.pixelSize: 10
-                    color: Kirigami.Theme.negativeTextColor
+                    color: fullRoot.errorColor(gd)
                     wrapMode: Text.Wrap
                     width: 320
                     Layout.preferredWidth: 320

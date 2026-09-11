@@ -25,6 +25,23 @@ PlasmoidItem {
     readonly property bool showCodex: Plasmoid.configuration.showCodex !== false
     readonly property bool showGemini: Plasmoid.configuration.showGemini !== false
 
+    // A provider is polled only if it is shown in the popup or drives the panel
+    // icon. Hidden providers made API calls nobody could see, which counted
+    // against the same rate limit as the visible ones.
+    readonly property string panelTool: Plasmoid.configuration.panelTool || "claude"
+    readonly property bool claudePolled: showClaude || panelTool === "claude"
+    readonly property bool codexPolled: showCodex || panelTool === "codex"
+    readonly property bool geminiPolled: showGemini || panelTool === "gemini"
+
+    // Per-provider backoff, in ms, applied on top of the configured interval
+    // after a transient failure. Without this, a rate-limited token kept being
+    // polled at the normal cadence and never got a chance to recover.
+    property var backoffMs: ({ "claude": 0, "codex": 0, "gemini": 0 })
+    readonly property int maxBackoffMs: 30 * 60 * 1000
+    readonly property var transientFailures: [
+        "rate_limited", "timeout", "network_error", "server_error", "http_error"
+    ]
+
     // Path to the Python script (resolved relative to this QML file)
     readonly property string scriptPath: {
         var url = Qt.resolvedUrl("../scripts/fetch_all_usage.py").toString()
@@ -62,9 +79,18 @@ PlasmoidItem {
             }
             try {
                 var result = JSON.parse(stdout)
-                if (result.claude !== undefined) root.claudeData = result.claude || {}
-                if (result.codex  !== undefined) root.codexData  = result.codex  || {}
-                if (result.gemini !== undefined) root.geminiData = result.gemini || {}
+                if (result.claude !== undefined) {
+                    root.claudeData = result.claude || {}
+                    root.applyBackoff("claude", root.claudeData, root.claudeRefreshMs)
+                }
+                if (result.codex !== undefined) {
+                    root.codexData = result.codex || {}
+                    root.applyBackoff("codex", root.codexData, root.codexRefreshMs)
+                }
+                if (result.gemini !== undefined) {
+                    root.geminiData = result.gemini || {}
+                    root.applyBackoff("gemini", root.geminiData, root.geminiRefreshMs)
+                }
                 root.lastError = ""
                 var now = new Date()
                 root.lastUpdated = now.getHours().toString().padStart(2, "0") + ":" +
@@ -83,34 +109,72 @@ PlasmoidItem {
     }
 
     function refresh() {
-        refreshProvider("claude")
-        refreshProvider("codex")
-        refreshProvider("gemini")
+        if (claudePolled) refreshProvider("claude")
+        if (codexPolled)  refreshProvider("codex")
+        if (geminiPolled) refreshProvider("gemini")
     }
 
-    // Per-provider timers
+    // Grow the provider's poll interval while it keeps failing transiently,
+    // honouring Retry-After when the provider sent one. Serving cached data
+    // does not clear it: the provider is still failing, we just have something
+    // to show. Only a clean answer resets the interval.
+    function applyBackoff(provider, data, baseMs) {
+        var failing = !!data && !!data.fail_reason
+            && transientFailures.indexOf(data.fail_reason) !== -1
+        if (!failing) {
+            setBackoff(provider, 0)
+            return
+        }
+        var next
+        if (data.retry_after_secs !== undefined && data.retry_after_secs !== null)
+            next = data.retry_after_secs * 1000
+        else
+            next = backoffMs[provider] > 0 ? backoffMs[provider] * 2 : baseMs * 2
+        setBackoff(provider, Math.min(next, maxBackoffMs))
+    }
+
+    function setBackoff(provider, ms) {
+        if (backoffMs[provider] === ms) return
+        // Replace the object rather than mutating it, so bindings re-evaluate.
+        var next = {
+            "claude": backoffMs.claude,
+            "codex": backoffMs.codex,
+            "gemini": backoffMs.gemini
+        }
+        next[provider] = ms
+        backoffMs = next
+    }
+
+    // Per-provider timers. The interval is the configured one unless a backoff
+    // is in effect, in which case we poll no more often than the backoff.
     Timer {
         id: claudeTimer
-        interval: root.claudeRefreshMs
-        running: true; repeat: true
+        interval: Math.max(root.claudeRefreshMs, root.backoffMs.claude)
+        running: root.claudePolled; repeat: true
         onTriggered: root.refreshProvider("claude")
     }
     Timer {
         id: codexTimer
-        interval: root.codexRefreshMs
-        running: true; repeat: true
+        interval: Math.max(root.codexRefreshMs, root.backoffMs.codex)
+        running: root.codexPolled; repeat: true
         onTriggered: root.refreshProvider("codex")
     }
     Timer {
         id: geminiTimer
-        interval: root.geminiRefreshMs
-        running: true; repeat: true
+        interval: Math.max(root.geminiRefreshMs, root.backoffMs.gemini)
+        running: root.geminiPolled; repeat: true
         onTriggered: root.refreshProvider("gemini")
     }
 
-    onClaudeRefreshMsChanged: { claudeTimer.interval = root.claudeRefreshMs; claudeTimer.restart() }
-    onCodexRefreshMsChanged:  { codexTimer.interval  = root.codexRefreshMs;  codexTimer.restart()  }
-    onGeminiRefreshMsChanged: { geminiTimer.interval = root.geminiRefreshMs; geminiTimer.restart() }
+    onClaudeRefreshMsChanged: claudeTimer.restart()
+    onCodexRefreshMsChanged:  codexTimer.restart()
+    onGeminiRefreshMsChanged: geminiTimer.restart()
+
+    // Fetch immediately when a provider is switched back on, instead of
+    // leaving it blank until the next tick.
+    onClaudePolledChanged: if (claudePolled) refreshProvider("claude")
+    onCodexPolledChanged:  if (codexPolled)  refreshProvider("codex")
+    onGeminiPolledChanged: if (geminiPolled) refreshProvider("gemini")
 
     // Initial load
     Component.onCompleted: root.refresh()

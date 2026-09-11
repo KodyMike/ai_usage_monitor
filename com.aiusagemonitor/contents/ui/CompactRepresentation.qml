@@ -30,8 +30,13 @@ Item {
         return Math.min((activeData.five_hour_pct || 0), 100)
     }
 
+    // Cached data served during a provider failure still has usable numbers,
+    // so the panel keeps showing a percentage; only a hard failure gets "!".
+    readonly property bool activeUsable: !activeData.error || activeData.stale === true
+
     property string activeText: {
         if (root.isLoading) return "…"
+        if (!compactRoot.activeUsable) return "!"
         if (panelTool === "gemini")
             return (gd.used_pct !== undefined) ? (gd.used_pct + "%") : "—"
         return activeData.five_hour_pct !== undefined ? activeData.five_hour_pct + "%" : "—"
@@ -44,6 +49,7 @@ Item {
     }
 
     function ringColor() {
+        if (!compactRoot.activeUsable) return "#ef4444"
         if (panelTool === "gemini")
             return gd.authenticated === true ? "#22c55e" : "#ef4444"
         var p = activePct
